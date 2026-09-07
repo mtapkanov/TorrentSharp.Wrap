@@ -1,6 +1,17 @@
 name: Publish
 
 on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+        description: Version to publish (e.g. v0.2.0 or 0.2.0)
   release:
     types: [ published ]
 
@@ -13,10 +24,11 @@ jobs:
 
       - name: Determine version
         # release-please tags releases as "v1.2.3"; NuGet package versions can't carry the "v".
+        # workflow_call callers pass the version directly (no "v" prefix).
         id: version
         run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ inputs.version || github.event.release.tag_name }}
 
       - name: Restore
         # local-packages/ only exists after a local ./scripts/build.sh run; NuGet.Config still
@@ -29,14 +41,7 @@ jobs:
       - name: Build
         run: dotnet build TorrentSharp.Wrap.sln -c Release --no-restore -p:Version=${{ steps.version.outputs.version }}
 
-      - name: Pack (Beta)
-        if: github.event.release.prerelease
-        run: |
-          dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }}-beta TorrentSharp.Wrap/TorrentSharp.Wrap.csproj
-          dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }}-beta TorrentSharp.Wrap.DependencyInjection/TorrentSharp.Wrap.DependencyInjection.csproj
-
-      - name: Pack (Stable)
-        if: "!github.event.release.prerelease"
+      - name: Pack
         run: |
           dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }} TorrentSharp.Wrap/TorrentSharp.Wrap.csproj
           dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }} TorrentSharp.Wrap.DependencyInjection/TorrentSharp.Wrap.DependencyInjection.csproj
