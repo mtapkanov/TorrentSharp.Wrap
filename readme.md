@@ -1,5 +1,17 @@
 # TorrentSharp.Wrap
+[![NuGet](https://img.shields.io/nuget/v/TorrentSharp.Wrap.svg?label=TorrentSharp.Wrap)](https://www.nuget.org/packages/TorrentSharp.Wrap/)
+[![NuGet](https://img.shields.io/nuget/v/TorrentSharp.Wrap.DependencyInjection.svg?label=TorrentSharp.Wrap.DependencyInjection)](https://www.nuget.org/packages/TorrentSharp.Wrap.DependencyInjection/)
+[![NuGet](https://img.shields.io/nuget/v/TorrentSharp.Wrap.Native.svg?label=TorrentSharp.Wrap.Native)](https://www.nuget.org/packages/TorrentSharp.Wrap.Native/)
+
 A .NET wrapper for libtorrent, with its own native layer (no external native package dependency).
+
+## Installation
+
+```bash
+dotnet add package TorrentSharp.Wrap
+```
+
+`TorrentSharp.Wrap.Native` (the native `libtsw`/`libtorrent` binaries) comes along automatically as a dependency - it shouldn't normally be referenced directly.
 
 ## Building from source
 Requires [CMake](https://cmake.org), [vcpkg](https://vcpkg.io) (`VCPKG_ROOT` pointing at your checkout, defaults to `~/vcpkg`), and the .NET SDK.
@@ -120,7 +132,12 @@ Console.WriteLine($"Name: {torrentManager.Info!.Metadata.Name}");
 ```
 
 ## Dependency injection
-`TorrentSharp.Wrap.DependencyInjection` registers a single `TorrentClient` against `Microsoft.Extensions.DependencyInjection`, configured through the options pattern.
+
+```bash
+dotnet add package TorrentSharp.Wrap.DependencyInjection
+```
+
+[`TorrentSharp.Wrap.DependencyInjection`](https://www.nuget.org/packages/TorrentSharp.Wrap.DependencyInjection/) registers a single `TorrentClient` against `Microsoft.Extensions.DependencyInjection`, configured through the options pattern.
 
 ```csharp
 services.AddTorrentClient(config =>
@@ -131,4 +148,4 @@ services.AddTorrentClient(config =>
 ```
 
 ### Supported Systems
-Built and tested on macOS (arm64). Native build triplets exist for Linux and Windows (x64/arm64) with fully static linkage, but they haven't been validated outside of macOS yet.
+Native builds (fully statically linked) are published for macOS, Linux, and Windows, on both x64 and arm64.
