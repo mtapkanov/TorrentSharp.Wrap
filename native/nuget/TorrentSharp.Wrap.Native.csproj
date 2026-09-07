@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AssemblyName>TorrentSharp.Wrap.Native</AssemblyName>
+        <TargetFramework>net10.0</TargetFramework>
+        <IncludeBuildOutput>false</IncludeBuildOutput>
+        <Version>0.1.0</Version>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <IsPackable>true</IsPackable>
+        <PackageId>TorrentSharp.Wrap.Native</PackageId>
+
+        <Title>TorrentSharp.Wrap Native Libraries</Title>
+        <Description>Native libraries for TorrentSharp.Wrap (libtsw+libtorrent)</Description>
+
+        <PackageIcon>icon.png</PackageIcon>
+        <PackageReadmeFile>docs/readme.md</PackageReadmeFile>
+        <PackageLicenseFile>docs/license.md</PackageLicenseFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="runtimes\**\native\*">
+            <Pack>true</Pack>
+            <PackagePath>runtimes</PackagePath>
+        </None>
+
+        <None Include="_._">
+            <!-- https://docs.microsoft.com/en-us/nuget/reference/errors-and-warnings/nu5128#scenario-2 -->
+            <Pack>true</Pack>
+            <PackagePath>lib\$(TargetFramework)</PackagePath>
+        </None>
+
+        <None Include="readme.md" Pack="true" PackagePath="docs" Visible="false"/>
+        <None Include="license.md" Pack="true" PackagePath="docs" Visible="false"/>
+        <None Include="..\..\icon.png" Pack="true" PackagePath="." Visible="false"/>
+    </ItemGroup>
+</Project>

@@ -1,0 +1,59 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TorrentSharp.Wrap", "TorrentSharp.Wrap\TorrentSharp.Wrap.csproj", "{05BF6C14-9528-4A25-8115-4C9E375F5C8F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TorrentSharp.Wrap.Tests", "TorrentSharp.Wrap.Tests\TorrentSharp.Wrap.Tests.csproj", "{17CE20FB-C049-4697-A58D-46771881268B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TorrentSharp.Wrap.DependencyInjection", "TorrentSharp.Wrap.DependencyInjection\TorrentSharp.Wrap.DependencyInjection.csproj", "{570E921D-8704-4657-867D-C2D495D46A0E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Debug|x64.Build.0 = Debug|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Debug|x86.Build.0 = Debug|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Release|x64.ActiveCfg = Release|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Release|x64.Build.0 = Release|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Release|x86.ActiveCfg = Release|Any CPU
+		{05BF6C14-9528-4A25-8115-4C9E375F5C8F}.Release|x86.Build.0 = Release|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Debug|x64.Build.0 = Debug|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Debug|x86.Build.0 = Debug|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Release|x64.ActiveCfg = Release|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Release|x64.Build.0 = Release|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Release|x86.ActiveCfg = Release|Any CPU
+		{17CE20FB-C049-4697-A58D-46771881268B}.Release|x86.Build.0 = Release|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Debug|x64.Build.0 = Debug|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Debug|x86.Build.0 = Debug|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Release|x64.ActiveCfg = Release|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Release|x64.Build.0 = Release|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Release|x86.ActiveCfg = Release|Any CPU
+		{570E921D-8704-4657-867D-C2D495D46A0E}.Release|x86.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

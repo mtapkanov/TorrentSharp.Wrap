@@ -1,0 +1,63 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/native/build/triplets"
+      }
+    },
+    {
+      "name": "osx-arm64",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "tsw-release-osx-arm64"
+      }
+    },
+    {
+      "name": "osx-x64",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "tsw-release-osx-x64"
+      }
+    },
+    {
+      "name": "linux-x64",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/native/build/linux-x64.cmake",
+        "VCPKG_TARGET_TRIPLET": "tsw-release-linux-x64"
+      }
+    },
+    {
+      "name": "linux-arm64",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/native/build/linux-arm64.cmake",
+        "VCPKG_TARGET_TRIPLET": "tsw-release-linux-arm64"
+      }
+    },
+    {
+      "name": "windows-x64",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "tsw-release-windows-x64"
+      }
+    },
+    {
+      "name": "windows-arm64",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "tsw-release-windows-arm64"
+      }
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+name: Publish
+
+on:
+  release:
+    types: [ published ]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Determine version
+        # release-please tags releases as "v1.2.3"; NuGet package versions can't carry the "v".
+        id: version
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+
+      - name: Restore
+        # local-packages/ only exists after a local ./scripts/build.sh run; NuGet.Config still
+        # references it as a source, and errors (NU1301) if the folder is missing outright rather
+        # than just empty.
+        run: |
+          mkdir -p local-packages
+          dotnet restore TorrentSharp.Wrap.sln
+
+      - name: Build
+        run: dotnet build TorrentSharp.Wrap.sln -c Release --no-restore -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Pack (Beta)
+        if: github.event.release.prerelease
+        run: |
+          dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }}-beta TorrentSharp.Wrap/TorrentSharp.Wrap.csproj
+          dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }}-beta TorrentSharp.Wrap.DependencyInjection/TorrentSharp.Wrap.DependencyInjection.csproj
+
+      - name: Pack (Stable)
+        if: "!github.event.release.prerelease"
+        run: |
+          dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }} TorrentSharp.Wrap/TorrentSharp.Wrap.csproj
+          dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }} TorrentSharp.Wrap.DependencyInjection/TorrentSharp.Wrap.DependencyInjection.csproj
+
+      - name: Publish
+        run: dotnet nuget push -s https://api.nuget.org/v3/index.json --skip-duplicate -k ${{ secrets.NUGET_KEY }} ./packages/*.nupkg
