@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v0.2.0...v0.3.0) (2026-09-08)
+
+
+### Features
+
+* add TorrentManager.OpenFileStream for HTTP-style piece streaming ([74ecab0](https://github.com/mtapkanov/TorrentSharp.Wrap/commit/74ecab0723e2e3986f72d4152d729f6dd28e9a42))
+
 ## [0.2.0](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v0.1.0...v0.2.0) (2026-09-07)
 
 
