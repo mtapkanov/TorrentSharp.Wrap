@@ -70,6 +70,50 @@ public class PieceStreamingTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task OpenFileStream_ReadsFullFileContentMatchingDiskCopy()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        // качаем только самый маленький файл, чтобы тест выполнялся быстро
+        var targetFile = torrentManager.Files.OrderBy(x => x.Info.FileSize).First();
+
+        foreach (var file in torrentManager.Files.Where(x => x != targetFile))
+        {
+            file.Priority = FileDownloadPriority.DoNotDownload;
+        }
+
+        try
+        {
+            torrentManager.Start();
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
+            await using var stream = torrentManager.OpenFileStream(targetFile.Info.Index);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream, timeoutCts.Token);
+
+            Assert.Equal(targetFile.Info.FileSize, memoryStream.Length);
+
+            // после полного чтения через стрим файл на диске должен содержать те же байты -
+            // читаем его напрямую, а не через libtorrent, чтобы проверка была независимой
+            using var diskTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (!File.Exists(targetFile.Path))
+            {
+                diskTimeoutCts.Token.ThrowIfCancellationRequested();
+                await Task.Delay(50, diskTimeoutCts.Token);
+            }
+
+            var diskBytes = await File.ReadAllBytesAsync(targetFile.Path, timeoutCts.Token);
+            Assert.Equal(diskBytes, memoryStream.ToArray());
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
     private async Task PerformCleanup(TorrentManager manager)
     {
         var cleanupTask = new TaskCompletionSource();

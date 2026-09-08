@@ -285,7 +285,7 @@ public class TorrentManager
     /// queue transition, not for every alert added while a batch is already draining) would hang
     /// this call forever, since nothing else would ever complete the pending read. Defaults to 30s.
     /// </param>
-    /// <exception cref="IOException">The piece failed to read from disk</exception>
+    /// <exception cref="IOException">The piece failed to read from the disk.</exception>
     /// <exception cref="TimeoutException">The piece didn't arrive within <paramref name="timeout"/></exception>
     public async Task<byte[]> ReadPieceAsync(int pieceIndex, CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
@@ -305,6 +305,32 @@ public class TorrentManager
         {
             _pendingPieceReads.TryRemove(new KeyValuePair<int, TaskCompletionSource<byte[]>>(pieceIndex, taskCompletionSource));
         }
+    }
+
+    /// <summary>
+    /// Opens a read-only stream over one of this torrent's files, prioritizing pieces as they're
+    /// read so sequential/seek-driven access (e.g. serving the file over HTTP) stays smooth
+    /// without downloading the rest of the file eagerly.
+    /// </summary>
+    /// <param name="fileIndex">Index of the file to stream, matching its position in <see cref="Files"/></param>
+    /// <param name="pieceTimeout">
+    /// Upper bound on waiting for any single piece the stream needs to read - see
+    /// <see cref="ReadPieceAsync"/>'s own <c>timeout</c> parameter. Defaults to 30s.
+    /// </param>
+    /// <exception cref="InvalidOperationException">Torrent metadata has not been received yet</exception>
+    public Stream OpenFileStream(int fileIndex, TimeSpan? pieceTimeout = null)
+    {
+        ObjectDisposedException.ThrowIf(_detached, this);
+
+        if (Info == null)
+            throw new InvalidOperationException("Torrent metadata has not been received yet.");
+
+        if (fileIndex < 0 || fileIndex >= Files.Count)
+            throw new ArgumentOutOfRangeException(nameof(fileIndex));
+
+        // каждый вызов возвращает независимый поток со своим локом и кэшем куска - конкурентные
+        // стримы (даже на один и тот же файл) не блокируют и не вытесняют кэш друг друга.
+        return new TorrentFileStream(this, Files[fileIndex], pieceTimeout);
     }
 
     // завершает ожидающий вызов ReadPieceAsync, как только кусок прочитан с диска.
