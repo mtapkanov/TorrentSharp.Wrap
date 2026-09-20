@@ -1,5 +1,4 @@
 using TorrentSharp.Wrap.Notifications;
-using TorrentSharp.Wrap.Enums;
 using JetBrains.Annotations;
 using TorrentSharp.Wrap.Configurations;
 using Xunit.Abstractions;
@@ -7,7 +6,7 @@ using Xunit.Abstractions;
 namespace TorrentSharp.Wrap.Tests;
 
 [TestSubject(typeof(TorrentClient))]
-public class TorrentClientTests : IDisposable
+public partial class TorrentClientTests : IDisposable
 {
     private readonly TorrentClient _client = new(new TorrentClientConfig
     {
@@ -71,57 +70,32 @@ public class TorrentClientTests : IDisposable
     }
 
     [Fact]
-    public async Task TestTorrentDownload()
+    public void IsDhtRunning_DoesNotThrow()
     {
-        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
-        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
-
-        var tcs = new TaskCompletionSource();
-
-        // качаем только не-видео файлы (< 10мб)
-        foreach (var file in torrentManager.Files.Where(x => x.Info.FileSize > 1e+7))
-        {
-            file.Priority = FileDownloadPriority.DoNotDownload;
-        }
-
-        try
-        {
-            torrentManager.Start();
-
-            await using (new Timer(CheckProgress, (torrentManager, tcs), TimeSpan.Zero, TimeSpan.FromSeconds(5)))
-            {
-                await tcs.Task.WaitAsync(TimeSpan.FromMinutes(2));
-            }
-
-            // делаем повторный announce
-            torrentManager.ReannounceAllTrackers(TimeSpan.Zero);
-
-            // проверяем, что все файлы скачаны и имеют правильный размер
-            foreach (var file in torrentManager.Files.Where(x => x.Priority != FileDownloadPriority.DoNotDownload))
-            {
-                Assert.True(File.Exists(file.Path));
-                Assert.Equal(file.Info.FileSize, new FileInfo(file.Path).Length);
-            }
-        }
-        finally
-        {
-            await PerformCleanup(torrentManager);
-        }
-
-        Assert.True(!_client.ActiveTorrents.Contains(torrentManager));
+        _ = _client.IsDhtRunning;
     }
 
-    private void CheckProgress(object? state)
+    [Fact]
+    public void AddDhtNode_DoesNotThrow()
     {
-        var (manager, tcs) = (ValueTuple<TorrentManager, TaskCompletionSource>)state!;
-        var status = manager.GetCurrentStatus();
+        _client.AddDhtNode("router.bittorrent.com", 6881);
+    }
 
-        if (status.State is TorrentState.Finished or TorrentState.Seeding)
-        {
-            tcs.TrySetResult();
-        }
+    [Fact]
+    public void AddIpFilterRuleAndClearIpFilter_DoNotThrow()
+    {
+        _client.AddIpFilterRule("1.2.3.4", "1.2.3.4", blocked: true);
+        _client.ClearIpFilter();
+    }
 
-        _output.WriteLine($"Progress: {status.State} {status.Progress * 100:F2}% ({status.SeedCount:N0} seeds)");
+    [Fact]
+    public async Task GetSessionStatsAsync_ReturnsNonEmptyMetricSet()
+    {
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var metrics = await _client.GetSessionStatsAsync(timeoutCts.Token);
+
+        Assert.NotEmpty(metrics);
+        Assert.Contains(metrics.Keys, key => key.StartsWith("net.", StringComparison.Ordinal));
     }
 
     private async Task PerformCleanup(TorrentManager manager)

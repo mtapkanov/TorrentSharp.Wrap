@@ -10,6 +10,7 @@
 #include <boost/system/system_error.hpp>
 #include <libtorrent/session.hpp>
 #include <libtorrent/alert_types.hpp>
+#include <libtorrent/write_resume_data.hpp>
 
 void fill_info_hash(const lt::info_hash_t &hashes, char* buffer) {
     // fill in the info hash
@@ -49,7 +50,13 @@ void populate_peer_alert(cs_peer_alert* peer_alert, lt::peer_alert* alert, cs_pe
     fill_event_info(&peer_alert->alert, alert, cs_alert_type::alert_peer_notification, message);
 
     peer_alert->type = alert_type;
-    peer_alert->handle = &alert->handle;
+
+    // Deliberately not `&alert->handle`: that would point into the popped lt::alert itself, which
+    // libtorrent only keeps valid for this dispatch batch (the next pop_alerts() call can reuse or
+    // free it) - a lifetime the C# side has no way to respect. The Handle field of PeerEvent is
+    // currently unused downstream; if a real use ever needs it, it must go through a call that
+    // fetches a fresh, independently-owned torrent_handle instead of reusing this one.
+    peer_alert->handle = nullptr;
 
     auto v6_mapped_addr = alert->endpoint.address().to_v6().to_bytes();
     std::copy(v6_mapped_addr.begin(), v6_mapped_addr.end(), peer_alert->ipv6_address);
@@ -76,6 +83,15 @@ void on_events_available(lt::session* session, cs_alert_callback callback, bool 
 
     handle_events:
     for (auto &alert: events) {
+        // Last-resort safety net: a native library must never be able to take down its whole host
+        // process over a single bad alert. This doesn't replace guarding individual torrent_handle
+        // accesses at their source (see library.cpp's safe_handle_call and fill_info_hash_safe above)
+        // - by the time an exception reaches here it may already have skipped straight to
+        // std::terminate if it was thrown from a *nested* native call made by the managed callback()
+        // below (a C++ exception can't unwind back through managed frames), but it does catch
+        // anything thrown directly within this function's own alert-handling code, including from
+        // future alert types added here without going through the existing safe accessors.
+        try {
         switch (alert->type()) {
 
             // torrent state changed
@@ -205,6 +221,138 @@ void on_events_available(lt::session* session, cs_alert_callback callback, bool 
                 break;
             }
 
+            case lt::file_renamed_alert::alert_type: {
+                auto* renamed_alert = lt::alert_cast<lt::file_renamed_alert>(alert);
+                cs_file_renamed_alert file_renamed{};
+
+                file_renamed.file_index = static_cast<int32_t>(static_cast<int>(renamed_alert->index));
+                file_renamed.succeeded = true;
+
+                fill_info_hash_safe(renamed_alert->handle, file_renamed.info_hash);
+                fill_event_info(&file_renamed.alert, alert, cs_alert_type::alert_file_renamed, &message_temp);
+                callback(&file_renamed);
+                break;
+            }
+
+            case lt::file_rename_failed_alert::alert_type: {
+                auto* failed_alert = lt::alert_cast<lt::file_rename_failed_alert>(alert);
+                cs_file_renamed_alert file_renamed{};
+
+                file_renamed.file_index = static_cast<int32_t>(static_cast<int>(failed_alert->index));
+                file_renamed.succeeded = false;
+
+                fill_info_hash_safe(failed_alert->handle, file_renamed.info_hash);
+                fill_event_info(&file_renamed.alert, alert, cs_alert_type::alert_file_renamed, &message_temp);
+                callback(&file_renamed);
+                break;
+            }
+
+            case lt::storage_moved_alert::alert_type: {
+                auto* moved_alert = lt::alert_cast<lt::storage_moved_alert>(alert);
+                cs_storage_moved_alert storage_moved{};
+
+                storage_moved.succeeded = true;
+
+                fill_info_hash_safe(moved_alert->handle, storage_moved.info_hash);
+                fill_event_info(&storage_moved.alert, alert, cs_alert_type::alert_storage_moved, &message_temp);
+                callback(&storage_moved);
+                break;
+            }
+
+            case lt::storage_moved_failed_alert::alert_type: {
+                auto* failed_alert = lt::alert_cast<lt::storage_moved_failed_alert>(alert);
+                cs_storage_moved_alert storage_moved{};
+
+                storage_moved.succeeded = false;
+
+                fill_info_hash_safe(failed_alert->handle, storage_moved.info_hash);
+                fill_event_info(&storage_moved.alert, alert, cs_alert_type::alert_storage_moved, &message_temp);
+                callback(&storage_moved);
+                break;
+            }
+
+            case lt::scrape_reply_alert::alert_type: {
+                auto* scrape_alert = lt::alert_cast<lt::scrape_reply_alert>(alert);
+                cs_scrape_alert scrape{};
+
+                scrape.succeeded = true;
+                scrape.incomplete = scrape_alert->incomplete;
+                scrape.complete = scrape_alert->complete;
+
+                fill_info_hash_safe(scrape_alert->handle, scrape.info_hash);
+                fill_event_info(&scrape.alert, alert, cs_alert_type::alert_scrape, &message_temp);
+                callback(&scrape);
+                break;
+            }
+
+            case lt::scrape_failed_alert::alert_type: {
+                auto* failed_alert = lt::alert_cast<lt::scrape_failed_alert>(alert);
+                cs_scrape_alert scrape{};
+
+                scrape.succeeded = false;
+                scrape.incomplete = -1;
+                scrape.complete = -1;
+
+                fill_info_hash_safe(failed_alert->handle, scrape.info_hash);
+                fill_event_info(&scrape.alert, alert, cs_alert_type::alert_scrape, &message_temp);
+                callback(&scrape);
+                break;
+            }
+
+            case lt::save_resume_data_alert::alert_type: {
+                auto* resume_alert = lt::alert_cast<lt::save_resume_data_alert>(alert);
+                cs_resume_data_alert resume_data{};
+
+                // serialized here (not in library.cpp) so the buffer's lifetime is scoped to this
+                // one dispatch iteration, same as read_piece_alert's buffer - freed the moment this
+                // switch case ends, well after callback() (and its synchronous Marshal.Copy on the
+                // C# side) has returned.
+                std::vector<char> buf;
+
+                try {
+                    buf = lt::write_resume_data_buf(resume_alert->params);
+                    resume_data.succeeded = true;
+                    resume_data.size = static_cast<int32_t>(buf.size());
+                    resume_data.buffer = buf.data();
+                } catch (const std::exception&) {
+                    resume_data.succeeded = false;
+                    resume_data.size = 0;
+                    resume_data.buffer = nullptr;
+                }
+
+                fill_info_hash_safe(resume_alert->handle, resume_data.info_hash);
+                fill_event_info(&resume_data.alert, alert, cs_alert_type::alert_resume_data, &message_temp);
+                callback(&resume_data);
+                break;
+            }
+
+            case lt::save_resume_data_failed_alert::alert_type: {
+                auto* failed_alert = lt::alert_cast<lt::save_resume_data_failed_alert>(alert);
+                cs_resume_data_alert resume_data{};
+
+                resume_data.succeeded = false;
+                resume_data.size = 0;
+                resume_data.buffer = nullptr;
+
+                fill_info_hash_safe(failed_alert->handle, resume_data.info_hash);
+                fill_event_info(&resume_data.alert, alert, cs_alert_type::alert_resume_data, &message_temp);
+                callback(&resume_data);
+                break;
+            }
+
+            case lt::session_stats_alert::alert_type: {
+                auto* stats_alert = lt::alert_cast<lt::session_stats_alert>(alert);
+                cs_session_stats_alert session_stats{};
+
+                const auto counters = stats_alert->counters();
+                session_stats.count = static_cast<int32_t>(counters.size());
+                session_stats.values = counters.data();
+
+                fill_event_info(&session_stats.alert, alert, cs_alert_type::alert_session_stats, &message_temp);
+                callback(&session_stats);
+                break;
+            }
+
             default: {
                 if (!include_unmapped) {
                     break;
@@ -216,6 +364,10 @@ void on_events_available(lt::session* session, cs_alert_callback callback, bool 
                 callback(&generic_alert);
                 break;
             }
+        }
+        } catch (const std::exception&) {
+            // Drop the bad alert and keep draining the rest of the batch.
+        } catch (...) {
         }
     }
 

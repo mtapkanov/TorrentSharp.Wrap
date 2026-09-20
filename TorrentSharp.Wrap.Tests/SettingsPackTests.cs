@@ -1,7 +1,9 @@
 using System.Net;
+using TorrentSharp.Wrap.Configurations;
 using TorrentSharp.Wrap.Enums;
 using TorrentSharp.Wrap.Utils;
 using JetBrains.Annotations;
+using TorrentSharp.Wrap.Configurations.Settings;
 using TorrentSharp.Wrap.Imports;
 
 namespace TorrentSharp.Wrap.Tests
@@ -15,20 +17,28 @@ namespace TorrentSharp.Wrap.Tests
         public void TestSettingsPack()
         {
             var pack = new SettingsPack();
-            pack.Set("user_agent", "libtorrent/1.20");
+            pack.Set(new UserAgent("libtorrent/1.20"));
 
-            Assert.Equal("libtorrent/1.20", pack.Get<string>("user_agent"));
+            Assert.Equal("libtorrent/1.20", pack.Get<UserAgent>()?.Value);
 
             _client.UpdateSettings(pack);
+        }
+
+        // не соответствует ни одному реальному ключу settings_pack у libtorrent - специально для
+        // проверки того, что BuildNative всё ещё падает на нативной валидации ключа.
+        private sealed record InvalidData(int Value) : ISettingsEntry<InvalidData>
+        {
+            public static string Key => "invalid_data";
+            public static InvalidData FromValue(object value) => new((int)value);
+            object ISettingsEntry<InvalidData>.Value => Value;
         }
 
         [Fact]
         public void TestInvalidSettings()
         {
             var pack = new SettingsPack();
-            pack.Set("invalid_data", 100);
+            pack.Set(new InvalidData(100));
 
-            Assert.Throws<ArgumentException>(() => pack.Get<bool>("invalid_data"));
             Assert.Throws<ArgumentException>(() => pack.BuildNative());
         }
 
@@ -46,7 +56,7 @@ namespace TorrentSharp.Wrap.Tests
 
             Assert.Equal("[::]:6001", interfaces[0].ToString());
             Assert.Equal("127.0.0.1:10001s", interfaces[1].ToString());
-            Assert.Contains("[::]:6001", pack.Get<string>("listen_interfaces"));
+            Assert.Contains("[::]:6001", pack.Get<ListenInterfaces>()?.Value);
 
             // проверяем совместимость с нативным pack'ом
             var nativePack = pack.BuildNative();
@@ -60,7 +70,7 @@ namespace TorrentSharp.Wrap.Tests
 
             pack.SetListenInterfaces(Array.Empty<ListenInterface>());
 
-            Assert.Null(pack.Get<string>("listen_interfaces"));
+            Assert.Null(pack.Get<ListenInterfaces>());
         }
 
         [Fact]
@@ -73,21 +83,13 @@ namespace TorrentSharp.Wrap.Tests
         }
 
         [Fact]
-        public void Get_MissingKey_ReturnsDefault()
+        public void Get_MissingKey_ReturnsNull()
         {
             var pack = new SettingsPack();
 
-            Assert.Null(pack.Get<string>("does_not_exist"));
-            Assert.Equal(0, pack.Get<int>("does_not_exist"));
-            Assert.False(pack.Get<bool>("does_not_exist"));
-        }
-
-        [Fact]
-        public void Set_UnsupportedType_ThrowsArgumentException()
-        {
-            var pack = new SettingsPack();
-
-            Assert.Throws<ArgumentException>(() => pack.Set("key", 1.5));
+            Assert.Null(pack.Get<UserAgent>());
+            Assert.Null(pack.Get<ConnectionsLimit>());
+            Assert.Null(pack.Get<AnonymousMode>());
         }
 
         [Fact]
@@ -95,7 +97,7 @@ namespace TorrentSharp.Wrap.Tests
         {
             var pack = new SettingsPack();
 
-            Assert.Throws<ArgumentNullException>(() => pack.Set<string>("key", null!));
+            Assert.Throws<ArgumentNullException>(() => pack.Set<AnonymousMode>(null!));
         }
 
         public void Dispose()

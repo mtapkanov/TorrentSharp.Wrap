@@ -1,6 +1,7 @@
 using TorrentSharp.Wrap.Enums;
 using JetBrains.Annotations;
 using TorrentSharp.Wrap.Configurations;
+using TorrentSharp.Wrap.Configurations.Settings;
 
 namespace TorrentSharp.Wrap.Tests;
 
@@ -12,8 +13,8 @@ public class TorrentClientConfigTests
     {
         var pack = new TorrentClientConfig().Build();
 
-        Assert.Null(pack.Get<string>("user_agent"));
-        Assert.Null(pack.Get<string>("peer_fingerprint"));
+        Assert.Null(pack.Get<UserAgent>());
+        Assert.Null(pack.Get<PeerFingerprint>());
     }
 
     [Fact]
@@ -25,8 +26,8 @@ public class TorrentClientConfigTests
             Fingerprint = "-TS0100-"
         }.Build();
 
-        Assert.Equal("tsw/1.0", pack.Get<string>("user_agent"));
-        Assert.Equal("-TS0100-", pack.Get<string>("peer_fingerprint"));
+        Assert.Equal("tsw/1.0", pack.Get<UserAgent>()?.Value);
+        Assert.Equal("-TS0100-", pack.Get<PeerFingerprint>()?.Value);
     }
 
     [Fact]
@@ -37,7 +38,7 @@ public class TorrentClientConfigTests
             NotificationCategories = NotificationCategories.Status | NotificationCategories.Peer
         }.Build();
 
-        Assert.Equal((int)(NotificationCategories.Status | NotificationCategories.Peer), pack.Get<int>("alert_mask"));
+        Assert.Equal(NotificationCategories.Status | NotificationCategories.Peer, pack.Get<AlertMask>()?.Value);
     }
 
     [Theory]
@@ -47,7 +48,7 @@ public class TorrentClientConfigTests
     {
         var pack = new TorrentClientConfig { PrivateMode = privateMode }.Build();
 
-        Assert.Equal(privateMode, pack.Get<bool>("anonymous_mode"));
+        Assert.Equal(privateMode, pack.Get<AnonymousMode>()?.Value);
     }
 
     [Theory]
@@ -57,7 +58,7 @@ public class TorrentClientConfigTests
     {
         var pack = new TorrentClientConfig { BlockSeeding = blockSeeding }.Build();
 
-        Assert.Equal(expectedSeedingOutgoing, pack.Get<bool>("seeding_outgoing_connections"));
+        Assert.Equal(expectedSeedingOutgoing, pack.Get<SeedingOutgoingConnections>()?.Value);
     }
 
     [Fact]
@@ -65,7 +66,7 @@ public class TorrentClientConfigTests
     {
         var pack = new TorrentClientConfig { MaxConnections = 50 }.Build();
 
-        Assert.Equal(50, pack.Get<int>("connections_limit"));
+        Assert.Equal(50, pack.Get<ConnectionsLimit>()?.Value);
     }
 
     [Fact]
@@ -73,7 +74,7 @@ public class TorrentClientConfigTests
     {
         var pack = new TorrentClientConfig { ForceEncryption = true }.Build();
 
-        Assert.Equal(0, pack.Get<int>("out_enc_policy"));
-        Assert.Equal(0, pack.Get<int>("in_enc_policy"));
+        Assert.Equal(0, pack.Get<OutEncPolicy>()?.Value);
+        Assert.Equal(0, pack.Get<InEncPolicy>()?.Value);
     }
 }

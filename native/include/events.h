@@ -45,7 +45,12 @@ enum cs_alert_type : int32_t {
     alert_peer_notification = 3,
     alert_torrent_removed = 4,
     alert_metadata_received = 5,
-    alert_read_piece = 6
+    alert_read_piece = 6,
+    alert_file_renamed = 7,
+    alert_storage_moved = 8,
+    alert_scrape = 9,
+    alert_resume_data = 10,
+    alert_session_stats = 11
 };
 
 // base format for all alerts
@@ -116,6 +121,61 @@ struct TSW_STRUCT cs_read_piece_alert {
 
     // only valid for the duration of the callback; nullptr if !succeeded
     const char *buffer;
+};
+
+// covers both file_renamed_alert and file_rename_failed_alert, differentiated by `succeeded`.
+struct TSW_STRUCT cs_file_renamed_alert {
+    cs_alert alert;
+
+    int32_t file_index;
+    bool succeeded;
+
+    char info_hash[20];
+};
+
+// covers both storage_moved_alert and storage_moved_failed_alert, differentiated by `succeeded`.
+struct TSW_STRUCT cs_storage_moved_alert {
+    cs_alert alert;
+
+    bool succeeded;
+
+    char info_hash[20];
+};
+
+// covers both scrape_reply_alert and scrape_failed_alert, differentiated by `succeeded`.
+// incomplete/complete are -1 when unknown (failure, or a malformed response).
+struct TSW_STRUCT cs_scrape_alert {
+    cs_alert alert;
+
+    bool succeeded;
+
+    int32_t incomplete;
+    int32_t complete;
+
+    char info_hash[20];
+};
+
+// covers both save_resume_data_alert and save_resume_data_failed_alert, differentiated by
+// `succeeded`. buffer holds the bencoded resume data - only valid for the duration of the
+// callback; nullptr if !succeeded.
+struct TSW_STRUCT cs_resume_data_alert {
+    cs_alert alert;
+
+    bool succeeded;
+
+    char info_hash[20];
+
+    int32_t size;
+    const char *buffer;
+};
+
+// session-wide, not associated with any particular torrent (no info_hash field). values is indexed
+// the same way as get_session_stats_metrics' value_index - only valid for the duration of the callback.
+struct TSW_STRUCT cs_session_stats_alert {
+    cs_alert alert;
+
+    int32_t count;
+    const int64_t *values;
 };
 
 #ifdef __cplusplus

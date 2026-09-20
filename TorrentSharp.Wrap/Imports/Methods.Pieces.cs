@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using TorrentSharp.Wrap.Enums;
 
 namespace TorrentSharp.Wrap.Imports;
 
@@ -46,6 +47,42 @@ internal static partial class Methods
     /// <param name="piecesOut">Buffer to populate</param>
     [LibraryImport(LibraryName, EntryPoint = "get_torrent_piece_map")]
     public static partial void GetTorrentPieceMap(IntPtr torrentSessionHandle, Span<byte> piecesOut, int piecesLen);
+
+    /// <summary>
+    /// Reads the download priority of a single piece.
+    /// </summary>
+    /// <param name="torrentSessionHandle">Session-scoped torrent handle</param>
+    /// <param name="pieceIndex">Index of the piece to query</param>
+    [LibraryImport(LibraryName, EntryPoint = "get_piece_priority")]
+    public static partial FileDownloadPriority GetPiecePriority(IntPtr torrentSessionHandle, int pieceIndex);
+
+    /// <summary>
+    /// Sets the download priority of a single piece.
+    /// </summary>
+    /// <param name="torrentSessionHandle">Session-scoped torrent handle</param>
+    /// <param name="pieceIndex">Index of the piece to update</param>
+    /// <param name="priority">New priority</param>
+    [LibraryImport(LibraryName, EntryPoint = "set_piece_priority")]
+    public static partial void SetPiecePriority(IntPtr torrentSessionHandle, int pieceIndex, FileDownloadPriority priority);
+
+    /// <summary>
+    /// Fills <paramref name="prioritiesOut"/> with a one-entry-per-piece priority map.
+    /// Size the buffer using <see cref="GetTorrentPieceCount"/> first.
+    /// </summary>
+    /// <param name="torrentSessionHandle">Session-scoped torrent handle</param>
+    /// <param name="prioritiesOut">Buffer to populate</param>
+    /// <param name="prioritiesLen">Length of the buffer</param>
+    [LibraryImport(LibraryName, EntryPoint = "get_torrent_piece_priorities")]
+    public static partial void GetTorrentPiecePriorities(IntPtr torrentSessionHandle, Span<FileDownloadPriority> prioritiesOut, int prioritiesLen);
+
+    /// <summary>
+    /// Sets the download priority of every piece in the torrent at once.
+    /// </summary>
+    /// <param name="torrentSessionHandle">Session-scoped torrent handle</param>
+    /// <param name="priorities">One priority per piece, matching <see cref="GetTorrentPieceCount"/></param>
+    /// <param name="prioritiesLen">Length of <paramref name="priorities"/></param>
+    [LibraryImport(LibraryName, EntryPoint = "set_torrent_piece_priorities")]
+    public static partial void SetTorrentPiecePriorities(IntPtr torrentSessionHandle, ReadOnlySpan<FileDownloadPriority> priorities, int prioritiesLen);
 
     /// <summary>
     /// Resolves a byte range within a file to the piece that contains it.

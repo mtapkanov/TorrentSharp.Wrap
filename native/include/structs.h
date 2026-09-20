@@ -79,6 +79,22 @@ TSW_STRUCT typedef struct cs_torrent_status {
 
     int64_t upload_rate;
     int64_t download_rate;
+
+    int64_t total_wanted;
+    int64_t total_wanted_done;
+
+    int64_t all_time_upload;
+    int64_t all_time_download;
+
+    time_t added_time;
+
+    int32_t num_connections;
+    int32_t queue_position;
+
+    int32_t distributed_full_copies;
+
+    bool is_finished;
+    bool moving_storage;
 } torrent_status;
 
 enum cs_peer_encryption : uint8_t {
@@ -135,6 +151,19 @@ TSW_STRUCT typedef struct cs_tracker_list {
     int32_t length;
     tracker_info_entry* trackers;
 } tracker_list;
+
+// one entry from lt::session_stats_metrics() - a name/index pair describing a slot in the
+// counters array carried by alert_session_stats. type: 0 = counter, 1 = gauge.
+TSW_STRUCT typedef struct cs_session_stats_metric {
+    char* name;
+    int32_t value_index;
+    uint8_t type;
+} session_stats_metric;
+
+TSW_STRUCT typedef struct cs_session_stats_metric_list {
+    int32_t length;
+    session_stats_metric* metrics;
+} session_stats_metric_list;
 
 #ifdef __cplusplus
 }

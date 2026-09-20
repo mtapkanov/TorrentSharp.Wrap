@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace TorrentSharp.Wrap.Tests;
 
 [TestSubject(typeof(TorrentManager))]
-public class TorrentManagerTests : IDisposable
+public partial class TorrentManagerTests : IDisposable
 {
     private readonly TorrentClient _client = new(new TorrentClientConfig
     {
@@ -83,6 +83,25 @@ public class TorrentManagerTests : IDisposable
     }
 
     [Fact]
+    public void TorrentManagerMethods_ThrowObjectDisposedImmediatelyAfterDetach_WithoutWaitingForNotification()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        // TorrentClient.DetachTorrent удаляет менеджер из своего словаря только когда придёт
+        // асинхронное уведомление TorrentRemoved, но нативный detach_torrent уже освободил
+        // torrent_handle синхронно, к моменту как этот вызов вернул управление. До фикса это
+        // оставляло окно, где _detached ещё false, а любой из вызовов ниже уходил в нативный код
+        // с висячим указателем вместо ObjectDisposedException - специально не ждём уведомление
+        // здесь, чтобы гарантированно попасть в это окно.
+        _client.DetachTorrent(torrentManager);
+
+        Assert.Throws<ObjectDisposedException>(torrentManager.GetPeers);
+        Assert.Throws<ObjectDisposedException>(torrentManager.GetTrackers);
+        Assert.Throws<ObjectDisposedException>(() => torrentManager.GetCurrentStatus());
+    }
+
+    [Fact]
     public async Task ReannounceAllTrackers_NegativeInterval_ThrowsArgumentOutOfRangeException()
     {
         var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
@@ -144,18 +163,298 @@ public class TorrentManagerTests : IDisposable
         {
             await PerformCleanup(torrentManager);
         }
+    }
 
-        return;
+    [Fact]
+    public async Task PiecePriority_EventuallyReflectsSetValue()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
 
-        static async Task AssertEventually(Func<bool> condition)
+        try
         {
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            // как и file_priority, приоритет куска применяется через внутренний поток сессии
+            // libtorrent, поэтому геттеру нужен опрос.
+            torrentManager.SetPiecePriority(0, FileDownloadPriority.DoNotDownload);
+            await AssertEventually(() => torrentManager.GetPiecePriority(0) == FileDownloadPriority.DoNotDownload);
 
-            while (!condition())
+            torrentManager.SetPiecePriority(0, FileDownloadPriority.High);
+            await AssertEventually(() => torrentManager.GetPiecePriority(0) == FileDownloadPriority.High);
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task PiecePriorities_BulkSetEventuallyReflectsInBulkGet()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            var priorities = new FileDownloadPriority[torrentManager.PieceCount];
+            Array.Fill(priorities, FileDownloadPriority.DoNotDownload);
+
+            torrentManager.SetPiecePriorities(priorities);
+            await AssertEventually(() => torrentManager.GetPiecePriorities().All(p => p == FileDownloadPriority.DoNotDownload));
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task GetCurrentStatus_ReturnsUnstartedDefaultsForExtendedFields_BeforeStart()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            var status = torrentManager.GetCurrentStatus();
+
+            Assert.Equal(0, status.TotalWantedDone);
+            Assert.Equal(0, status.AllTimeUpload);
+            Assert.Equal(0, status.AllTimeDownload);
+            Assert.False(status.IsFinished);
+            Assert.False(status.MovingStorage);
+            Assert.True(status.TotalWanted > 0);
+            Assert.True(status.AddedAt > DateTimeOffset.UtcNow.AddMinutes(-1));
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task UploadAndDownloadLimit_EventuallyReflectSetValue()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            // как и file_priority, лимиты применяются через внутренний поток сессии
+            // libtorrent, поэтому геттеру нужен опрос.
+            torrentManager.UploadLimit = 1024;
+            await AssertEventually(() => torrentManager.UploadLimit == 1024);
+
+            torrentManager.DownloadLimit = 2048;
+            await AssertEventually(() => torrentManager.DownloadLimit == 2048);
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task TorrentFlags_EventuallyReflectSetValue()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            torrentManager.SequentialDownload = true;
+            await AssertEventually(() => torrentManager.SequentialDownload);
+
+            torrentManager.ShareMode = true;
+            await AssertEventually(() => torrentManager.ShareMode);
+
+            torrentManager.UploadMode = true;
+            await AssertEventually(() => torrentManager.UploadMode);
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task QueuePosition_MovementMethods_DoNotThrow()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            _ = torrentManager.QueuePosition;
+
+            torrentManager.MoveQueueToTop();
+            torrentManager.MoveQueueUp();
+            torrentManager.MoveQueueDown();
+            torrentManager.MoveQueueToBottom();
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task ForceRecheck_DoesNotThrow()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            torrentManager.ForceRecheck();
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task RenameFileAsync_CompletesSuccessfully()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await torrentManager.RenameFileAsync(0, "renamed-file.bin", timeoutCts.Token);
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task MoveStorageAsync_CompletesSuccessfully()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        var newPath = Path.Combine(_tempSavePath, "moved");
+        Directory.CreateDirectory(newPath);
+
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await torrentManager.MoveStorageAsync(newPath, timeoutCts.Token);
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task AddTracker_EventuallyAppearsInGetTrackers()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            const string url = "udp://tracker.example.test:80/announce";
+
+            // как и другие torrent_handle-методы, add_tracker отправляет задачу во внутренний
+            // поток сессии libtorrent, поэтому геттеру нужен опрос.
+            torrentManager.AddTracker(url, tier: 5);
+            await AssertEventually(() => torrentManager.GetTrackers().Any(t => t.Url == url));
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task ReplaceTrackers_EventuallyReplacesAnnounceList()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            const string url = "udp://tracker.example.test:80/announce";
+            torrentManager.ReplaceTrackers([(url, (byte)0)]);
+
+            await AssertEventually(() =>
             {
-                timeoutCts.Token.ThrowIfCancellationRequested();
-                await Task.Delay(50, timeoutCts.Token);
-            }
+                var trackers = torrentManager.GetTrackers();
+                return trackers.Count == 1 && trackers[0].Url == url;
+            });
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task AddUrlSeedAndAddHttpSeed_DoNotThrow()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            torrentManager.AddUrlSeed("http://example.test/seed/");
+            torrentManager.AddHttpSeed("http://example.test/http-seed/");
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task SaveResumeDataAsync_ReturnsNonEmptyBuffer()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var data = await torrentManager.SaveResumeDataAsync(timeoutCts.Token);
+
+            Assert.NotEmpty(data);
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
+    public async Task AttachTorrent_WithResumeData_RoundTripsSuccessfully()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var firstManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        byte[] resumeData;
+        using (var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            resumeData = await firstManager.SaveResumeDataAsync(timeoutCts.Token);
+        }
+
+        await PerformCleanup(firstManager);
+
+        var firstInfoHash = firstManager.InfoHash;
+        var secondManager = _client.AttachTorrent(torrentInfo, _tempSavePath, resumeData);
+
+        try
+        {
+            Assert.Equal(firstInfoHash, secondManager.InfoHash);
+            Assert.NotEmpty(secondManager.Files);
+        }
+        finally
+        {
+            await PerformCleanup(secondManager);
         }
     }
 
@@ -249,6 +548,17 @@ public class TorrentManagerTests : IDisposable
             }
 
             cleanupTask.TrySetResult();
+        }
+    }
+
+    private static async Task AssertEventually(Func<bool> condition)
+    {
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        while (!condition())
+        {
+            timeoutCts.Token.ThrowIfCancellationRequested();
+            await Task.Delay(50, timeoutCts.Token);
         }
     }
 }

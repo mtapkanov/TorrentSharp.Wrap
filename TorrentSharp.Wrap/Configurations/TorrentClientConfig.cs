@@ -1,3 +1,4 @@
+using TorrentSharp.Wrap.Configurations.Settings;
 using TorrentSharp.Wrap.Enums;
 
 namespace TorrentSharp.Wrap.Configurations;
@@ -27,30 +28,30 @@ public class TorrentClientConfig
         // user-agent клиента
         if (!string.IsNullOrEmpty(UserAgent))
         {
-            pack.Set("user_agent", UserAgent);
+            pack.Set(new UserAgent(UserAgent));
         }
 
         // отпечаток клиента
         if (!string.IsNullOrEmpty(Fingerprint))
         {
-            pack.Set("peer_fingerprint", Fingerprint);
+            pack.Set(new PeerFingerprint(Fingerprint));
         }
 
         // уведомления
-        pack.Set("alert_mask", (int)NotificationCategories);
+        pack.Set(new AlertMask(NotificationCategories));
 
-        pack.Set("anonymous_mode", PrivateMode);
-        pack.Set("seeding_outgoing_connections", !BlockSeeding);
+        pack.Set(new AnonymousMode(PrivateMode));
+        pack.Set(new SeedingOutgoingConnections(!BlockSeeding));
 
         if (MaxConnections.HasValue)
         {
-            pack.Set("connections_limit", MaxConnections.Value);
+            pack.Set(new ConnectionsLimit(MaxConnections.Value));
         }
 
         if (ForceEncryption)
         {
-            pack.Set("out_enc_policy", 0);
-            pack.Set("in_enc_policy", 0);
+            pack.Set(new OutEncPolicy(0));
+            pack.Set(new InEncPolicy(0));
         }
 
         return pack;
