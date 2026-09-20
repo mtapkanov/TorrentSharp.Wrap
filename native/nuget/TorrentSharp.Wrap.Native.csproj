@@ -4,7 +4,7 @@
         <AssemblyName>TorrentSharp.Wrap.Native</AssemblyName>
         <TargetFramework>net10.0</TargetFramework>
         <IncludeBuildOutput>false</IncludeBuildOutput>
-        <Version>0.1.0</Version>
+        <Version>0.2.0</Version>
     </PropertyGroup>
 
     <PropertyGroup>
