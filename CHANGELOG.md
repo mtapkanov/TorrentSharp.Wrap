@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v1.0.0...v1.0.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* bump TorrentSharp.Wrap.Native dependency to 0.2.0 ([61f169c](https://github.com/mtapkanov/TorrentSharp.Wrap/commit/61f169c0497264311848a6934674f5f4f478aed7))
+
 ## [1.0.0](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v0.3.0...v1.0.0) (2026-09-20)
 
 
