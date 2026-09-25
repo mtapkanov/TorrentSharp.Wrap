@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v1.0.1...v1.1.0) (2026-09-25)
+
+
+### Features
+
+* surface libtorrent's file_error_alert ([c0a21ed](https://github.com/mtapkanov/TorrentSharp.Wrap/commit/c0a21ed9a2afd020a88012697e98a30aaf1cd4ec))
+
 ## [1.0.1](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v1.0.0...v1.0.1) (2026-09-20)
 
 
