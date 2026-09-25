@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using TorrentSharp.Wrap.Notifications;
 using TorrentSharp.Wrap.Enums;
 using JetBrains.Annotations;
@@ -458,14 +459,10 @@ public partial class TorrentManagerTests : IDisposable
         }
     }
 
-    [Fact]
+    [UnixOnlyFact]
+    [UnsupportedOSPlatform("windows")]
     public async Task ForceRecheck_FileNotReadable_RaisesFileErrorNotification()
     {
-        // File.SetUnixFileMode below has no Windows equivalent - this library isn't built for
-        // Windows anyway (see scripts/build.sh's presets), so there's nothing to exercise there.
-        if (OperatingSystem.IsWindows())
-            return;
-
         var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
         var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
 
