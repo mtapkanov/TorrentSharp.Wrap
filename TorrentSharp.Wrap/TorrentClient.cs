@@ -300,7 +300,10 @@ public class TorrentClient : IDisposable
         if (!manager.TryMarkDetachRequested())
             throw new InvalidOperationException("The torrent is already being detached.");
 
-        manager.Stop();
+        // No explicit pause here - native detach_torrent (library.cpp) already calls
+        // torrent_handle::pause() itself right before remove_torrent(). Pausing again from here
+        // would just be a redundant native round-trip that also fires an extra, uninvited
+        // torrent_paused_alert to the caller for a torrent that's about to disappear anyway.
 
         // Помечаем отсоединённым СИНХРОННО, до нативного вызова, а не только когда придёт
         // асинхронное уведомление TorrentRemoved - native detach_torrent освобождает torrent_handle
@@ -447,11 +450,8 @@ public class TorrentClient : IDisposable
             return new MetadataReceivedNotification(metaNotification, metaSubject);
 
         var infoHandle = Methods.GetHandleTorrentInfo(metaSubject.TorrentSessionHandle);
-        if (infoHandle == IntPtr.Zero) 
+        if (infoHandle == IntPtr.Zero)
             return new MetadataReceivedNotification(metaNotification, metaSubject);
-        
-        if (metaSubject.PauseAfterMetadata) 
-            Methods.StopTorrent(metaSubject.TorrentSessionHandle);
 
         metaSubject.OnMetadataReceived(new TorrentInfo(infoHandle));
 
