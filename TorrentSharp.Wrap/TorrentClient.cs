@@ -385,6 +385,7 @@ public class TorrentClient : IDisposable
             NotificationType.Scrape => ScrapeHandle(eventPtr),
             NotificationType.ResumeData => ResumeDataHandle(eventPtr),
             NotificationType.SessionStats => SessionStatsHandle(eventPtr),
+            NotificationType.FileError => FileErrorHandle(eventPtr),
             _ => null
         };
 
@@ -529,6 +530,14 @@ public class TorrentClient : IDisposable
         subject.OnResumeDataSaved(resumeEvent.Succeeded, data);
 
         return new ResumeDataNotification(resumeEvent, subject, data);
+    }
+
+    private SessionNotification? FileErrorHandle(IntPtr eventPtr)
+    {
+        var fileErrorEvent = Marshal.PtrToStructure<FileErrorEvent>(eventPtr);
+        return _attachedManagers.TryGetValue(Convert.ToHexString(fileErrorEvent.InfoHash), out var subject)
+            ? new FileErrorNotification(fileErrorEvent, subject)
+            : null;
     }
 
     private SessionNotification SessionStatsHandle(IntPtr eventPtr)

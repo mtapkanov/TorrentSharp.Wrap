@@ -340,6 +340,20 @@ void on_events_available(lt::session* session, cs_alert_callback callback, bool 
                 break;
             }
 
+            case lt::file_error_alert::alert_type: {
+                auto* file_err_alert = lt::alert_cast<lt::file_error_alert>(alert);
+                cs_file_error_alert file_error{};
+
+                file_error.error_value = file_err_alert->error.value();
+                file_error.operation = static_cast<uint8_t>(file_err_alert->op);
+                file_error.filename = file_err_alert->filename();
+
+                fill_info_hash_safe(file_err_alert->handle, file_error.info_hash);
+                fill_event_info(&file_error.alert, alert, cs_alert_type::alert_file_error, &message_temp);
+                callback(&file_error);
+                break;
+            }
+
             case lt::session_stats_alert::alert_type: {
                 auto* stats_alert = lt::alert_cast<lt::session_stats_alert>(alert);
                 cs_session_stats_alert session_stats{};

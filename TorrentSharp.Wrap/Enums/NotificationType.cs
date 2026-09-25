@@ -13,5 +13,6 @@ public enum NotificationType
     StorageMoved = 8,
     Scrape = 9,
     ResumeData = 10,
-    SessionStats = 11
+    SessionStats = 11,
+    FileError = 12
 }

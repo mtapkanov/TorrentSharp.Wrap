@@ -459,6 +459,67 @@ public partial class TorrentManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task ForceRecheck_FileNotReadable_RaisesFileErrorNotification()
+    {
+        // File.SetUnixFileMode below has no Windows equivalent - this library isn't built for
+        // Windows anyway (see scripts/build.sh's presets), so there's nothing to exercise there.
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            var file = torrentManager.Files[0];
+            Directory.CreateDirectory(Path.GetDirectoryName(file.Path)!);
+            // Sized to exactly match what the torrent expects - a size mismatch would let libtorrent
+            // conclude "needs downloading" from stat() alone, without ever calling open() for a real
+            // read and hitting the permission error this test is actually after.
+            using (var placeholder = File.Create(file.Path))
+                placeholder.SetLength(file.Info.FileSize);
+            // No read permission at all - libtorrent's open() during the recheck below must fail
+            // with a real OS error (EACCES), not just see "file doesn't exist yet" (the normal,
+            // silent case for a torrent that's never been downloaded).
+            File.SetUnixFileMode(file.Path, UnixFileMode.None);
+
+            var errorTcs = new TaskCompletionSource<FileErrorNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            void OnNotification(object? sender, SessionNotification notification)
+            {
+                if (notification is FileErrorNotification fileError)
+                    errorTcs.TrySetResult(fileError);
+            }
+
+            _client.NotificationRaised += OnNotification;
+            try
+            {
+                // Torrents attach paused by default (see library.cpp's AttachTorrent) - libtorrent
+                // doesn't actually run a forced recheck's disk I/O until the torrent is unpaused.
+                torrentManager.Start();
+                torrentManager.ForceRecheck();
+
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await using (timeoutCts.Token.Register(() => errorTcs.TrySetCanceled()))
+                {
+                    var notification = await errorTcs.Task;
+
+                    Assert.Equal(torrentManager.InfoHash, notification.TorrentManager.InfoHash);
+                    Assert.NotEmpty(notification.Filename);
+                }
+            }
+            finally
+            {
+                _client.NotificationRaised -= OnNotification;
+            }
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
     public async Task GetPeersAndGetTrackers_ReflectRealSwarmActivityOnceStarted()
     {
         var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));

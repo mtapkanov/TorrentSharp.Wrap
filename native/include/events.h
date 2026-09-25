@@ -50,7 +50,8 @@ enum cs_alert_type : int32_t {
     alert_storage_moved = 8,
     alert_scrape = 9,
     alert_resume_data = 10,
-    alert_session_stats = 11
+    alert_session_stats = 11,
+    alert_file_error = 12
 };
 
 // base format for all alerts
@@ -176,6 +177,26 @@ struct TSW_STRUCT cs_session_stats_alert {
 
     int32_t count;
     const int64_t *values;
+};
+
+// libtorrent's file_error_alert: the storage layer failed to read or write a file it needs -
+// libtorrent auto-pauses the torrent when this fires (see file_error_alert's own docs), so this is
+// the only signal that a torrent stuck in checking/downloading is actually blocked on a disk-level
+// problem (a missing or inaccessible file, a full disk, a permissions issue, ...) rather than just
+// being slow. error_value is the raw error_code value (an errno-equivalent on POSIX); operation is
+// libtorrent's operation_t as a raw byte (see libtorrent/operations.hpp for the meaning of each
+// value - file, file_read, file_write, file_stat, ... - not re-declared here since most of its ~40
+// values are socket-related and never apply to this alert). filename is only valid for the
+// duration of the callback, same lifetime rule as read_piece's buffer/resume_data's buffer.
+struct TSW_STRUCT cs_file_error_alert {
+    cs_alert alert;
+
+    int32_t error_value;
+    uint8_t operation;
+
+    char info_hash[20];
+
+    const char *filename;
 };
 
 #ifdef __cplusplus
