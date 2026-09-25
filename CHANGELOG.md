@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v1.1.0...v2.0.0) (2026-09-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* TorrentManager.PauseAfterMetadata has been removed. Magnet sessions no longer auto-pause when their metadata arrives - callers that relied on this for a file-selection window should pause explicitly from their own MetadataReceivedNotification handler instead.
+
+### Bug Fixes
+
+* remove wrapper-invented pause behavior ([be3ea79](https://github.com/mtapkanov/TorrentSharp.Wrap/commit/be3ea794dd887341d7319cd24778a8ecbee5a57c))
+
 ## [1.1.0](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v1.0.1...v1.1.0) (2026-09-25)
 
 
