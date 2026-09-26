@@ -42,7 +42,10 @@ void fill_event_info(cs_alert* alert, lt::alert* lt_alert, cs_alert_type alert_t
     alert->epoch = time(nullptr);
     alert->category = (int32_t) static_cast<uint32_t>(lt_alert->category());
 
-    message_temp->append(lt_alert->message());
+    // assign, not append: message_temp is one std::string shared across every alert in the current
+    // pop_alerts() batch (see on_events_available) - append()ing here left each alert after the first
+    // in a batch with every prior alert's message still stuck to the front of its own.
+    message_temp->assign(lt_alert->message());
     alert->message = message_temp->c_str();
 }
 
