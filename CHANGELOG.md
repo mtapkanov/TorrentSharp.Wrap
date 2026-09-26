@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v2.0.0...v2.0.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* stop alert messages from accumulating across a batch ([c09ab42](https://github.com/mtapkanov/TorrentSharp.Wrap/commit/c09ab423849ca0fc2b1826d1d38808f9dcf1e7fc))
+
 ## [2.0.0](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v1.1.0...v2.0.0) (2026-09-25)
 
 
