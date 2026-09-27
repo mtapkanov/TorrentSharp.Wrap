@@ -5,4 +5,15 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      Single source of truth for TorrentSharp.Wrap.Native's version - both native/nuget/TorrentSharp.Wrap.Native.csproj
+      (what it's packed as) and TorrentSharp.Wrap/TorrentSharp.Wrap.csproj (what it references) key off
+      this instead of two separately hand-maintained numbers. CI overrides it to the release tag via
+      -p:TorrentSharpWrapNativeVersion=; local builds fall back to a placeholder that never collides with
+      a real published version, so scripts/build.sh's local-packages/ + cleared global cache always wins.
+    -->
+    <TorrentSharpWrapNativeVersion Condition="'$(TorrentSharpWrapNativeVersion)' == ''">0.0.0-local</TorrentSharpWrapNativeVersion>
+  </PropertyGroup>
 </Project>
