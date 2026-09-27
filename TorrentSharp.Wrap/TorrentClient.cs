@@ -219,9 +219,14 @@ public class TorrentClient : IDisposable
     /// <c>null</c> for a fresh attach. Malformed or stale data is silently ignored rather than
     /// failing the attach.
     /// </param>
+    /// <param name="downloadByDefault">
+    /// When <c>false</c>, every file starts at <see cref="FileDownloadPriority.DoNotDownload"/>
+    /// instead of the usual default - useful to inspect a torrent (or let the caller pick files)
+    /// before committing to downloading anything.
+    /// </param>
     /// <returns>A <see cref="TorrentManager"/> for controlling the transfer</returns>
     /// <exception cref="InvalidOperationException">The session rejected the torrent</exception>
-    public TorrentManager AttachTorrent(TorrentInfo torrent, string? savePath = null, byte[]? resumeData = null)
+    public TorrentManager AttachTorrent(TorrentInfo torrent, string? savePath = null, byte[]? resumeData = null, bool downloadByDefault = true)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -233,7 +238,7 @@ public class TorrentClient : IDisposable
 
         savePath = ResolveSavePath(savePath);
 
-        var handle = Methods.AttachTorrent(_handle, torrent.InfoHandle, savePath, resumeData, resumeData?.Length ?? 0);
+        var handle = Methods.AttachTorrent(_handle, torrent.InfoHandle, savePath, resumeData, resumeData?.Length ?? 0, !downloadByDefault);
         if (handle == IntPtr.Zero)
             throw new InvalidOperationException("Failed to attach torrent to session.");
 
@@ -255,15 +260,21 @@ public class TorrentClient : IDisposable
     /// <paramref name="magnetUri"/>'s own trackers. Malformed or stale data is silently ignored
     /// rather than failing the attach.
     /// </param>
+    /// <param name="downloadByDefault">
+    /// When <c>false</c>, every file discovered once metadata arrives starts at
+    /// <see cref="FileDownloadPriority.DoNotDownload"/> instead of the usual default - useful to
+    /// inspect a magnet (or let the caller pick files) before committing to downloading anything,
+    /// without racing the moment metadata is received.
+    /// </param>
     /// <returns>A <see cref="TorrentManager"/> for controlling the transfer</returns>
     /// <exception cref="InvalidOperationException">The URI was invalid, or the session rejected it</exception>
-    public TorrentManager AttachMagnet(string magnetUri, string? savePath = null, byte[]? resumeData = null)
+    public TorrentManager AttachMagnet(string magnetUri, string? savePath = null, byte[]? resumeData = null, bool downloadByDefault = true)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         savePath = ResolveSavePath(savePath);
 
-        var handle = Methods.AttachMagnet(_handle, magnetUri, savePath, resumeData, resumeData?.Length ?? 0);
+        var handle = Methods.AttachMagnet(_handle, magnetUri, savePath, resumeData, resumeData?.Length ?? 0, !downloadByDefault);
         if (handle == IntPtr.Zero)
             throw new InvalidOperationException("Failed to attach magnet URI to session. Ensure the URI is valid.");
 

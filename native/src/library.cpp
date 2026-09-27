@@ -374,7 +374,7 @@ void destroy_torrent(lt::torrent_info* torrent)
 // attach a torrent to the session, returning a handle that can be used to control the download.
 // the torrent info handle is copied, and can be freed after the call to attach_torrent with a call to destroy_torrent_info.
 // resume_data/resume_data_len are optional (nullptr/0 to skip).
-lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torrent, const char* save_path, const char* resume_data, const int32_t resume_data_len)
+lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torrent, const char* save_path, const char* resume_data, const int32_t resume_data_len, const bool default_dont_download)
 {
     if (session == nullptr || torrent == nullptr)
     {
@@ -407,6 +407,11 @@ lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torre
     params.flags |= lt::torrent_flags::paused;
     params.flags &= ~lt::torrent_flags::auto_managed;
 
+    if (default_dont_download)
+    {
+        params.flags |= lt::torrent_flags::default_dont_download;
+    }
+
     // set torrent info - make_shared creates a copy. Always taken from the caller-supplied
     // torrent, even when resume data was applied above, since that's the definitive metadata the
     // caller asked to attach - resume data mainly contributes piece/file state, not authority over
@@ -425,7 +430,7 @@ lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torre
 }
 
 // resume_data/resume_data_len are optional (nullptr/0 to skip).
-lt::torrent_handle* attach_magnet(lt::session* session, const char* magnet_uri, const char* save_path, const char* resume_data, const int32_t resume_data_len)
+lt::torrent_handle* attach_magnet(lt::session* session, const char* magnet_uri, const char* save_path, const char* resume_data, const int32_t resume_data_len, const bool default_dont_download)
 {
     if (session == nullptr || magnet_uri == nullptr)
     {
@@ -462,6 +467,11 @@ lt::torrent_handle* attach_magnet(lt::session* session, const char* magnet_uri, 
 
     params.flags |= lt::torrent_flags::paused;
     params.flags &= ~lt::torrent_flags::auto_managed;
+
+    if (default_dont_download)
+    {
+        params.flags |= lt::torrent_flags::default_dont_download;
+    }
 
     const auto handle = new lt::torrent_handle(session->add_torrent(params));
 

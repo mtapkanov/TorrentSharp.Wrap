@@ -48,8 +48,10 @@ extern "C" {
 
     // resume_data/resume_data_len are optional (nullptr/0 to skip) - a buffer previously returned
     // by save_torrent_resume_data, parsed via lt::read_resume_data and merged into the attach.
-    TSW_EXPORT lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torrent, const char* save_path, const char* resume_data, int32_t resume_data_len);
-    TSW_EXPORT lt::torrent_handle* attach_magnet(lt::session* session, const char* magnet_uri, const char* save_path, const char* resume_data, int32_t resume_data_len);
+    // default_dont_download, when true, starts every file (present or discovered later via magnet
+    // metadata) at dont_download priority instead of the usual default.
+    TSW_EXPORT lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torrent, const char* save_path, const char* resume_data, int32_t resume_data_len, bool default_dont_download);
+    TSW_EXPORT lt::torrent_handle* attach_magnet(lt::session* session, const char* magnet_uri, const char* save_path, const char* resume_data, int32_t resume_data_len, bool default_dont_download);
     TSW_EXPORT void detach_torrent(lt::session* session, lt::torrent_handle* torrent);
 
     // triggers an async save of a torrent's resume data; completion is reported via alert_resume_data.

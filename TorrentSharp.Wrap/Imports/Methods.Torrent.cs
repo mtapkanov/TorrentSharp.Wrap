@@ -48,9 +48,10 @@ internal static partial class Methods
     /// <param name="savePath">Destination directory for the torrent's contents</param>
     /// <param name="resumeData">Previously saved resume data, or <c>null</c> to skip</param>
     /// <param name="resumeDataLen">Length of <paramref name="resumeData"/>, or <c>0</c> if <c>null</c></param>
+    /// <param name="defaultDontDownload">When <c>true</c>, every file starts at <see cref="Enums.FileDownloadPriority.DoNotDownload"/> instead of the usual default</param>
     /// <returns>Handle scoped to this torrent within the session</returns>
     [LibraryImport(LibraryName, EntryPoint = "attach_torrent", StringMarshalling = StringMarshalling.Utf8)]
-    public static partial IntPtr AttachTorrent(IntPtr sessionHandle, IntPtr torrentHandle, [MarshalAs(UnmanagedType.LPUTF8Str)] string savePath, byte[]? resumeData, int resumeDataLen);
+    public static partial IntPtr AttachTorrent(IntPtr sessionHandle, IntPtr torrentHandle, [MarshalAs(UnmanagedType.LPUTF8Str)] string savePath, byte[]? resumeData, int resumeDataLen, [MarshalAs(UnmanagedType.I1)] bool defaultDontDownload);
 
     /// <summary>
     /// Adds a magnet link to a session; its metadata is fetched from peers afterward.
@@ -61,9 +62,10 @@ internal static partial class Methods
     /// <param name="savePath">Destination directory for the torrent's contents</param>
     /// <param name="resumeData">Previously saved resume data, or <c>null</c> to skip</param>
     /// <param name="resumeDataLen">Length of <paramref name="resumeData"/>, or <c>0</c> if <c>null</c></param>
+    /// <param name="defaultDontDownload">When <c>true</c>, every file discovered once metadata arrives starts at <see cref="Enums.FileDownloadPriority.DoNotDownload"/> instead of the usual default</param>
     /// <returns>Handle scoped to this torrent within the session, or <see cref="IntPtr.Zero"/> if the URI couldn't be parsed</returns>
     [LibraryImport(LibraryName, EntryPoint = "attach_magnet", StringMarshalling = StringMarshalling.Utf8)]
-    public static partial IntPtr AttachMagnet(IntPtr sessionHandle, [MarshalAs(UnmanagedType.LPUTF8Str)] string magnetUri, [MarshalAs(UnmanagedType.LPUTF8Str)] string savePath, byte[]? resumeData, int resumeDataLen);
+    public static partial IntPtr AttachMagnet(IntPtr sessionHandle, [MarshalAs(UnmanagedType.LPUTF8Str)] string magnetUri, [MarshalAs(UnmanagedType.LPUTF8Str)] string savePath, byte[]? resumeData, int resumeDataLen, [MarshalAs(UnmanagedType.I1)] bool defaultDontDownload);
 
     /// <summary>
     /// Retrieves the parsed torrent behind a session-scoped handle, once its metadata has arrived.

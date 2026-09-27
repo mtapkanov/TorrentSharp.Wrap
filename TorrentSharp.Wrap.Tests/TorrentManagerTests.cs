@@ -142,6 +142,23 @@ public partial class TorrentManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task AttachTorrent_DownloadByDefaultFalse_AllFilesStartAsDoNotDownload()
+    {
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath, downloadByDefault: false);
+
+        try
+        {
+            Assert.NotEmpty(torrentManager.Files);
+            Assert.All(torrentManager.Files, file => Assert.Equal(FileDownloadPriority.DoNotDownload, file.Priority));
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
+    }
+
+    [Fact]
     public async Task TorrentManagerFile_Priority_EventuallyReflectsSetValue()
     {
         var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));

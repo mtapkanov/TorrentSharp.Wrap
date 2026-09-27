@@ -1,6 +1,7 @@
 using TorrentSharp.Wrap.Notifications;
 using JetBrains.Annotations;
 using TorrentSharp.Wrap.Configurations;
+using TorrentSharp.Wrap.Enums;
 using Xunit.Abstractions;
 
 namespace TorrentSharp.Wrap.Tests;
@@ -128,6 +129,22 @@ public class MagnetTests : IDisposable
         Assert.Equal(_bigBuckBunnyName, manager.Info.Metadata.Name);
         Assert.Equal(_bigBuckBunnyFileCount, manager.Info.Metadata.TotalFiles);
         Assert.Equal(_bigBuckBunnyTotalSize, manager.Info.Metadata.TotalSize);
+
+        await CleanupAsync(manager);
+    }
+
+    [Fact]
+    public async Task TestMagnetMetadataFetch_DownloadByDefaultFalse_AllFilesStartAsDoNotDownload()
+    {
+        var manager = _client.AttachMagnet(_bigBuckBunnyMagnet, _tempSavePath, downloadByDefault: false);
+
+        manager.Start();
+
+        using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        await manager.WaitForMetadata(cancellationTokenSource.Token);
+
+        Assert.NotEmpty(manager.Files);
+        Assert.All(manager.Files, file => Assert.Equal(FileDownloadPriority.DoNotDownload, file.Priority));
 
         await CleanupAsync(manager);
     }
