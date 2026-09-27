@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v2.0.1...v2.1.0) (2026-09-27)
+
+
+### Features
+
+* let AttachTorrent/AttachMagnet start files as dont-download by default ([4a546c9](https://github.com/mtapkanov/TorrentSharp.Wrap/commit/4a546c960d55b6025dd0f985cb9ae9739d43e52e))
+
 ## [2.0.1](https://github.com/mtapkanov/TorrentSharp.Wrap/compare/v2.0.0...v2.0.1) (2026-09-26)
 
 
