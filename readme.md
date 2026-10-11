@@ -31,7 +31,14 @@ This will usually be `static` (or singleton if using a dependency container), an
 var options = new TorrentClientConfig
 {
     ForceEncryption = true,
-    MaxConnections = 500
+    MaxConnections = 500,
+
+    // libtorrent only generates the alert categories asked for here, and the library no longer adds any
+    // itself. These three are what the async helpers need: Status for WaitForMetadata, Tracker for
+    // ScrapeTrackerAsync, Storage for SaveResumeDataAsync/RenameFileAsync/MoveStorageAsync/ReadPieceAsync.
+    // Without the matching category those calls wait forever. Add more (PieceProgress, PortMapping,
+    // Connect, Peer, ...) for the notifications you want to receive.
+    NotificationCategories = NotificationCategories.Status | NotificationCategories.Storage | NotificationCategories.Tracker
 };
 
 using var client = new TorrentClient(options);

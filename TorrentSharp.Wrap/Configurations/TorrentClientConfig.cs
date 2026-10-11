@@ -14,8 +14,12 @@ public class TorrentClientConfig
     public bool ForceEncryption { get; set; }
 
     /// <summary>
-    /// Notification categories the client should subscribe to.
-    /// A subset is always enabled regardless of this value, since the client depends on them internally.
+    /// Notification categories the client should subscribe to. Nothing is enabled by default - some
+    /// of this library's own methods (<see cref="TorrentManager.WaitForMetadata"/>,
+    /// <see cref="TorrentManager.ScrapeTrackerAsync"/>, <see cref="TorrentManager.SaveResumeDataAsync"/>,
+    /// <see cref="TorrentManager.RenameFileAsync"/>, <see cref="TorrentManager.MoveStorageAsync"/>)
+    /// resolve via a specific alert category (Status/Tracker/Storage respectively) and will hang
+    /// forever if that category isn't included here.
     /// </summary>
     public NotificationCategories NotificationCategories { get; set; }
 

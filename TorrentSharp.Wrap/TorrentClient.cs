@@ -15,11 +15,6 @@ namespace TorrentSharp.Wrap;
 /// </summary>
 public class TorrentClient : IDisposable
 {
-    // Storage нужна для read_piece_alert (ReadPiece) - без неё libtorrent никогда не выдаст
-    // этот event, независимо от того, как выставлены дедлайны. Tracker аналогично нужна для
-    // scrape_reply_alert/scrape_failed_alert (Scrape), которые ScrapeTrackerAsync ждёт напрямую.
-    private const NotificationCategories RequiredNotificationCategories = NotificationCategories.Status | NotificationCategories.Storage | NotificationCategories.Tracker;
-
     private readonly ConcurrentDictionary<string, TorrentManager> _attachedManagers = new(StringComparer.OrdinalIgnoreCase);
 
     // ссылку на делегате нужно держать явно, иначе GC может собрать её раньше времени
@@ -59,8 +54,6 @@ public class TorrentClient : IDisposable
     /// </summary>
     private unsafe TorrentClient(SettingsPack pack)
     {
-        ValidateSettingsPack(pack);
-
         var packHandle = pack.BuildNative();
 
         try
@@ -126,8 +119,6 @@ public class TorrentClient : IDisposable
     /// </summary>
     public void UpdateSettings(SettingsPack pack)
     {
-        ValidateSettingsPack(pack);
-
         var packHandle = pack.BuildNative();
 
         try
@@ -366,16 +357,6 @@ public class TorrentClient : IDisposable
     }
 
     /// <summary>
-    /// Ensures a settings pack carries the categories this library needs internally to function correctly.
-    /// </summary>
-    private static void ValidateSettingsPack(SettingsPack settingsPack)
-    {
-        // маска уведомлений (alert_mask) должна включать обязательные категории
-        var currentMask = settingsPack.Get<AlertMask>()?.Value ?? NotificationCategories.None;
-        settingsPack.Set(new AlertMask(currentMask | RequiredNotificationCategories));
-    }
-
-    /// <summary>
     /// Converts a raw unmanaged event into its managed equivalent and raises <see cref="NotificationRaised"/>.
     /// The unmanaged library owns the event's memory and frees it once this callback returns.
     /// </summary>
@@ -400,6 +381,16 @@ public class TorrentClient : IDisposable
             NotificationType.ResumeData => ResumeDataHandle(eventPtr),
             NotificationType.SessionStats => SessionStatsHandle(eventPtr),
             NotificationType.FileError => FileErrorHandle(eventPtr),
+            NotificationType.ListenFailed => ListenFailedHandle(eventPtr),
+            NotificationType.ListenSucceeded => ListenSucceededHandle(eventPtr),
+            NotificationType.Portmap => PortmapHandle(eventPtr),
+            NotificationType.PortmapError => PortmapErrorHandle(eventPtr),
+            NotificationType.ExternalIp => ExternalIpHandle(eventPtr),
+            NotificationType.PieceFinished => PieceFinishedHandle(eventPtr),
+            NotificationType.HashFailed => HashFailedHandle(eventPtr),
+            NotificationType.TorrentFinished => TorrentFinishedHandle(eventPtr),
+            NotificationType.TorrentError => TorrentErrorHandle(eventPtr),
+            NotificationType.MetadataFailed => MetadataFailedHandle(eventPtr),
             _ => null
         };
 
@@ -549,6 +540,76 @@ public class TorrentClient : IDisposable
         return _attachedManagers.TryGetValue(Convert.ToHexString(fileErrorEvent.InfoHash), out var subject)
             ? new FileErrorNotification(fileErrorEvent, subject)
             : null;
+    }
+
+    private SessionNotification? PieceFinishedHandle(IntPtr eventPtr)
+    {
+        var pieceFinishedEvent = Marshal.PtrToStructure<PieceFinishedEvent>(eventPtr);
+        return _attachedManagers.TryGetValue(Convert.ToHexString(pieceFinishedEvent.InfoHash), out var subject)
+            ? new PieceFinishedNotification(pieceFinishedEvent, subject)
+            : null;
+    }
+
+    private SessionNotification? HashFailedHandle(IntPtr eventPtr)
+    {
+        var hashFailedEvent = Marshal.PtrToStructure<HashFailedEvent>(eventPtr);
+        return _attachedManagers.TryGetValue(Convert.ToHexString(hashFailedEvent.InfoHash), out var subject)
+            ? new HashFailedNotification(hashFailedEvent, subject)
+            : null;
+    }
+
+    private SessionNotification? TorrentFinishedHandle(IntPtr eventPtr)
+    {
+        var torrentFinishedEvent = Marshal.PtrToStructure<TorrentFinishedEvent>(eventPtr);
+        return _attachedManagers.TryGetValue(Convert.ToHexString(torrentFinishedEvent.InfoHash), out var subject)
+            ? new TorrentFinishedNotification(torrentFinishedEvent, subject)
+            : null;
+    }
+
+    private SessionNotification? TorrentErrorHandle(IntPtr eventPtr)
+    {
+        var torrentErrorEvent = Marshal.PtrToStructure<TorrentErrorEvent>(eventPtr);
+        return _attachedManagers.TryGetValue(Convert.ToHexString(torrentErrorEvent.InfoHash), out var subject)
+            ? new TorrentErrorNotification(torrentErrorEvent, subject)
+            : null;
+    }
+
+    private SessionNotification? MetadataFailedHandle(IntPtr eventPtr)
+    {
+        var metadataFailedEvent = Marshal.PtrToStructure<MetadataFailedEvent>(eventPtr);
+        return _attachedManagers.TryGetValue(Convert.ToHexString(metadataFailedEvent.InfoHash), out var subject)
+            ? new MetadataFailedNotification(metadataFailedEvent, subject)
+            : null;
+    }
+
+    private static SessionNotification ListenFailedHandle(IntPtr eventPtr)
+    {
+        var listenFailedEvent = Marshal.PtrToStructure<ListenFailedEvent>(eventPtr);
+        return new ListenFailedNotification(listenFailedEvent);
+    }
+
+    private static SessionNotification ListenSucceededHandle(IntPtr eventPtr)
+    {
+        var listenSucceededEvent = Marshal.PtrToStructure<ListenSucceededEvent>(eventPtr);
+        return new ListenSucceededNotification(listenSucceededEvent);
+    }
+
+    private static SessionNotification PortmapHandle(IntPtr eventPtr)
+    {
+        var portmapEvent = Marshal.PtrToStructure<PortmapEvent>(eventPtr);
+        return new PortmapNotification(portmapEvent);
+    }
+
+    private static SessionNotification PortmapErrorHandle(IntPtr eventPtr)
+    {
+        var portmapErrorEvent = Marshal.PtrToStructure<PortmapErrorEvent>(eventPtr);
+        return new PortmapErrorNotification(portmapErrorEvent);
+    }
+
+    private static SessionNotification ExternalIpHandle(IntPtr eventPtr)
+    {
+        var externalIpEvent = Marshal.PtrToStructure<ExternalIpEvent>(eventPtr);
+        return new ExternalIpNotification(externalIpEvent);
     }
 
     private SessionNotification SessionStatsHandle(IntPtr eventPtr)

@@ -25,14 +25,21 @@
 // used internally in main library, not intended for public use
 typedef void (CALL_CONV *cs_alert_callback)(void *alert);
 
-TSW_NO_EXPORT void on_events_available(lt::session *session, cs_alert_callback callback, bool include_unmapped);
+// Alert dispatch is tracked per session. libtorrent only calls the notify function when the alert
+// queue goes from empty to non-empty, so a notification that is ever dropped leaves the queue
+// non-empty and silences every later one too - the session's alerts stop until something pops them.
+// register_alert_dispatch starts tracking a session and stores the managed callback to deliver to;
+// on_events_available (run on a detached thread per libtorrent notification) drains that session's
+// queue; release_alert_dispatch stops tracking it before the session is deleted.
+TSW_NO_EXPORT void register_alert_dispatch(lt::session *session, cs_alert_callback callback, bool include_unmapped);
 
-// Guards a session's alert queue against being torn down while a detached on_events_available
-// thread is still inside session->pop_alerts() for it. destroy_session blocks on this same mutex
-// before deleting the session, so any in-flight (or about to start) alert dispatch either
-// finishes first or is skipped (on_events_available's own try_lock is non-blocking, so a new
-// invocation racing the delete simply no-ops instead of touching freed memory).
-TSW_NO_EXPORT std::mutex& alert_dispatch_mutex();
+TSW_NO_EXPORT void on_events_available(lt::session *session);
+
+// Blocks until any in-flight on_events_available for this session has finished and guarantees no later
+// one touches the session again, so the caller can delete it right after. A notification racing the
+// delete finds the session unregistered (or marked destroyed) and no-ops instead of touching freed
+// memory.
+TSW_NO_EXPORT void release_alert_dispatch(lt::session *session);
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,7 +58,17 @@ enum cs_alert_type : int32_t {
     alert_scrape = 9,
     alert_resume_data = 10,
     alert_session_stats = 11,
-    alert_file_error = 12
+    alert_file_error = 12,
+    alert_listen_failed = 13,
+    alert_listen_succeeded = 14,
+    alert_portmap = 15,
+    alert_portmap_error = 16,
+    alert_external_ip = 17,
+    alert_piece_finished = 18,
+    alert_hash_failed = 19,
+    alert_torrent_finished = 20,
+    alert_torrent_error = 21,
+    alert_metadata_failed = 22
 };
 
 // base format for all alerts
@@ -197,6 +214,116 @@ struct TSW_STRUCT cs_file_error_alert {
     char info_hash[20];
 
     const char *filename;
+};
+
+// libtorrent's listen_failed_alert: the session failed to bind a listen socket on this
+// interface/port/protocol - session-wide, not tied to any torrent. If this fires for the socket
+// libtorrent picked for DHT, DHT will report itself as running while never actually bootstrapping
+// (no known nodes) - see cs_listen_succeeded_alert for the positive counterpart. socket_type mirrors
+// lt::socket_type_t (tcp = 0, ..., utp = 3, ...) - see libtorrent/socket_type.hpp for the full list.
+struct TSW_STRUCT cs_listen_failed_alert {
+    cs_alert alert;
+
+    int32_t error_value;
+    uint8_t operation;
+    uint8_t socket_type;
+
+    int32_t port;
+
+    // only valid for the duration of the callback
+    const char *listen_interface;
+};
+
+// libtorrent's listen_succeeded_alert: the positive counterpart to cs_listen_failed_alert.
+struct TSW_STRUCT cs_listen_succeeded_alert {
+    cs_alert alert;
+
+    uint8_t socket_type;
+    int32_t port;
+
+    // only valid for the duration of the callback
+    const char *address;
+};
+
+// mirrors lt::portmap_transport.
+enum cs_portmap_transport : uint8_t {
+    portmap_transport_natpmp = 0,
+    portmap_transport_upnp = 1
+};
+
+// libtorrent's portmap_alert: a NAT-PMP/UPnP router successfully mapped one of our ports - the
+// standard proxy most torrent clients use for "is my port open" without an external check.
+struct TSW_STRUCT cs_portmap_alert {
+    cs_alert alert;
+
+    int32_t external_port;
+    cs_portmap_transport transport;
+};
+
+// libtorrent's portmap_error_alert: a NAT-PMP/UPnP mapping attempt failed.
+struct TSW_STRUCT cs_portmap_error_alert {
+    cs_alert alert;
+
+    int32_t error_value;
+    cs_portmap_transport transport;
+};
+
+// libtorrent's external_ip_alert: libtorrent learned/changed its believed external IP -
+// session-wide, not tied to any torrent.
+struct TSW_STRUCT cs_external_ip_alert {
+    cs_alert alert;
+
+    // only valid for the duration of the callback
+    const char *external_address;
+};
+
+// libtorrent's piece_finished_alert: a piece finished downloading and passed its hash check. Note
+// this can fire before the piece is fully flushed to disk - torrent_handle::have_piece() may still
+// return false right after this.
+struct TSW_STRUCT cs_piece_finished_alert {
+    cs_alert alert;
+
+    int32_t piece_index;
+
+    char info_hash[20];
+};
+
+// libtorrent's hash_failed_alert: a downloaded piece failed its hash check (corrupt/bad data from a
+// peer) - discarded and re-requested, never written to disk with bad content.
+struct TSW_STRUCT cs_hash_failed_alert {
+    cs_alert alert;
+
+    int32_t piece_index;
+
+    char info_hash[20];
+};
+
+// libtorrent's torrent_finished_alert: this torrent finished downloading all its selected files.
+struct TSW_STRUCT cs_torrent_finished_alert {
+    cs_alert alert;
+
+    char info_hash[20];
+};
+
+// libtorrent's torrent_error_alert: this torrent transitioned into the error state. filename is only
+// valid for the duration of the callback, same lifetime rule as file_error's filename.
+struct TSW_STRUCT cs_torrent_error_alert {
+    cs_alert alert;
+
+    int32_t error_value;
+
+    char info_hash[20];
+
+    const char *filename;
+};
+
+// libtorrent's metadata_failed_alert: fetching/parsing this magnet's metadata failed.
+struct TSW_STRUCT cs_metadata_failed_alert {
+    cs_alert alert;
+
+    int32_t error_value;
+
+    char info_hash[20];
 };
 
 #ifdef __cplusplus

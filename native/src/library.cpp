@@ -4,6 +4,7 @@
 //
 
 #include "library.h"
+#include "state_mapping.h"
 
 #include <algorithm>
 #include <fstream>
@@ -176,11 +177,10 @@ void destroy_session(lt::session* session)
 
     session->abort();
 
-    // Blocks until any in-flight on_events_available invocation for this session finishes, then
-    // holds the same mutex while deleting - a new invocation racing this delete will simply find
-    // the mutex held (its own lock is a non-blocking try_lock) and no-op instead of touching freed
-    // memory. See alert_dispatch_mutex's declaration in events.h for the full race this closes.
-    std::lock_guard<std::mutex> guard(alert_dispatch_mutex());
+    // Blocks until any in-flight on_events_available invocation for this session finishes and makes
+    // every later one a no-op, so deleting right after can't race a dispatch thread still inside
+    // session->pop_alerts(). See register_alert_dispatch's declaration in events.h.
+    release_alert_dispatch(session);
     delete session;
 }
 
@@ -318,9 +318,11 @@ void set_event_callback(lt::session* session, cs_alert_callback callback, bool i
         return;
     }
 
-    auto session_callback = [session, callback, include_unmapped_events]() -> void
+    register_alert_dispatch(session, callback, include_unmapped_events);
+
+    auto session_callback = [session]() -> void
     {
-        std::thread(on_events_available, session, callback, include_unmapped_events).detach();
+        std::thread(on_events_available, session).detach();
     };
 
     session->set_alert_notify(session_callback);
@@ -960,36 +962,7 @@ void get_torrent_status(lt::torrent_handle* torrent, torrent_status* torrent_sta
         }
         else
         {
-            switch (s.state)
-            {
-            case lt::torrent_status::state_t::checking_files:
-                torrent_status->state = cs_torrent_state::torrent_checking;
-                break;
-
-            case lt::torrent_status::state_t::checking_resume_data:
-                torrent_status->state = cs_torrent_state::torrent_checking_resume;
-                break;
-
-            case lt::torrent_status::state_t::downloading_metadata:
-                torrent_status->state = cs_torrent_state::torrent_metadata_downloading;
-                break;
-
-            case lt::torrent_status::state_t::downloading:
-                torrent_status->state = cs_torrent_state::torrent_downloading;
-                break;
-
-            case lt::torrent_status::state_t::seeding:
-                torrent_status->state = cs_torrent_state::torrent_seeding;
-                break;
-
-            case lt::torrent_status::state_t::finished:
-                torrent_status->state = cs_torrent_state::torrent_finished;
-                break;
-
-            default:
-                torrent_status->state = cs_torrent_state::torrent_state_unknown;
-                break;
-            }
+            torrent_status->state = to_cs_torrent_state(s.state);
         }
 
         torrent_status->progress = s.progress;

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.Versioning;
 using TorrentSharp.Wrap.Notifications;
 using TorrentSharp.Wrap.Enums;
@@ -13,7 +14,11 @@ public partial class TorrentManagerTests : IDisposable
     private readonly TorrentClient _client = new(new TorrentClientConfig
     {
         ForceEncryption = true,
-        BlockSeeding = true
+        BlockSeeding = true,
+        // ScrapeTrackerAsync/SaveResumeDataAsync/RenameFileAsync/MoveStorageAsync/ReadPieceAsync each
+        // resolve via a Tracker/Storage-category alert - nothing is force-enabled by the library
+        // anymore, so tests own their own required categories.
+        NotificationCategories = NotificationCategories.Status | NotificationCategories.Storage | NotificationCategories.Tracker
     });
 
     private readonly ITestOutputHelper _output;
@@ -31,6 +36,42 @@ public partial class TorrentManagerTests : IDisposable
     {
         _client?.Dispose();
         Directory.Delete(_tempSavePath, true);
+    }
+
+    [Fact]
+    public async Task AttachTorrent_ReportsTheRealStateTransitions_NotLibtorrentsRawStateNumbers()
+    {
+        // libtorrent numbers its torrent states differently from TorrentState (its `downloading` is 3,
+        // which is our DownloadingMetadata; its `finished` is 4, which is our Downloading). A raw cast
+        // in the state_changed_alert path made a torrent that was downloading report
+        // DownloadingMetadata and one that had finished report Downloading.
+        var torrentInfo = new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent")));
+        var states = new ConcurrentQueue<TorrentState>();
+        var reachedDownloading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _client.NotificationRaised += (_, notification) =>
+        {
+            if (notification is not TorrentStatusNotification status)
+                return;
+
+            states.Enqueue(status.NewState);
+            if (status.NewState == TorrentState.Downloading)
+                reachedDownloading.TrySetResult();
+        };
+
+        var torrentManager = _client.AttachTorrent(torrentInfo, _tempSavePath);
+
+        try
+        {
+            await reachedDownloading.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+            // A .torrent file carries its metadata from the start, so it must never be reported as
+            // still fetching it.
+            Assert.DoesNotContain(TorrentState.DownloadingMetadata, states);
+        }
+        finally
+        {
+            await PerformCleanup(torrentManager);
+        }
     }
 
     [Fact]

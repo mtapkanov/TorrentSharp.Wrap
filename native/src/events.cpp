@@ -4,9 +4,13 @@
 //
 
 #include "events.h"
-#include "locks.hpp"
+#include "state_mapping.h"
 
+#include <atomic>
 #include <ctime>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <boost/system/system_error.hpp>
 #include <libtorrent/session.hpp>
 #include <libtorrent/alert_types.hpp>
@@ -67,18 +71,121 @@ void populate_peer_alert(cs_peer_alert* peer_alert, lt::peer_alert* alert, cs_pe
     fill_info_hash_safe(alert->handle, peer_alert->info_hash);
 }
 
-std::mutex& alert_dispatch_mutex() {
+namespace {
+
+// Everything one session's dispatch needs, kept alive by shared_ptr so a detached dispatch thread can
+// still safely look at it after the session itself has been released.
+struct dispatch_state {
+    std::mutex mutex;
+
+    // Raised by every notification BEFORE it tries the lock. Whoever holds the lock keeps draining
+    // until it can leave with this still false, so a notification that loses the try_lock race is
+    // never lost - the current drainer sees its flag and goes around again.
+    std::atomic<bool> pending{false};
+
+    std::atomic<cs_alert_callback> callback{nullptr};
+    std::atomic<bool> include_unmapped{false};
+
+    // Guarded by mutex.
+    bool destroyed = false;
+};
+
+std::mutex& dispatch_registry_mutex() {
     static std::mutex mutex;
     return mutex;
 }
 
-void on_events_available(lt::session* session, cs_alert_callback callback, bool include_unmapped) {
-    lock l(alert_dispatch_mutex());
+std::unordered_map<lt::session*, std::shared_ptr<dispatch_state>>& dispatch_registry() {
+    static std::unordered_map<lt::session*, std::shared_ptr<dispatch_state>> registry;
+    return registry;
+}
 
-    if (!l.isLockTaken()) {
+std::shared_ptr<dispatch_state> find_dispatch_state(lt::session* session) {
+    std::lock_guard<std::mutex> guard(dispatch_registry_mutex());
+    const auto found = dispatch_registry().find(session);
+    return found == dispatch_registry().end() ? nullptr : found->second;
+}
+
+void drain_alerts(lt::session* session, cs_alert_callback callback, bool include_unmapped);
+
+} // namespace
+
+void register_alert_dispatch(lt::session* session, cs_alert_callback callback, bool include_unmapped) {
+    std::shared_ptr<dispatch_state> state;
+    {
+        std::lock_guard<std::mutex> guard(dispatch_registry_mutex());
+        auto& slot = dispatch_registry()[session];
+        if (!slot) {
+            slot = std::make_shared<dispatch_state>();
+        }
+        state = slot;
+    }
+
+    state->callback.store(callback);
+    state->include_unmapped.store(include_unmapped);
+}
+
+void release_alert_dispatch(lt::session* session) {
+    std::shared_ptr<dispatch_state> state;
+    {
+        std::lock_guard<std::mutex> guard(dispatch_registry_mutex());
+        const auto found = dispatch_registry().find(session);
+        if (found == dispatch_registry().end()) {
+            return;
+        }
+
+        state = found->second;
+        dispatch_registry().erase(found);
+    }
+
+    // Waits for a drain that is already running; any that starts later finds `destroyed` set.
+    std::lock_guard<std::mutex> guard(state->mutex);
+    state->destroyed = true;
+}
+
+void on_events_available(lt::session* session) {
+    const auto state = find_dispatch_state(session);
+    if (!state) {
         return;
     }
 
+    // Before the try_lock, never after: see dispatch_state::pending.
+    state->pending.store(true);
+
+    for (;;) {
+        std::unique_lock<std::mutex> hold(state->mutex, std::try_to_lock);
+        if (!hold.owns_lock()) {
+            // Another thread is draining this session right now (or release_alert_dispatch is waiting
+            // on it); it will see `pending` before it leaves.
+            return;
+        }
+
+        if (state->destroyed) {
+            return;
+        }
+
+        while (state->pending.exchange(false)) {
+            const auto callback = state->callback.load();
+            if (callback == nullptr) {
+                break;
+            }
+
+            drain_alerts(session, callback, state->include_unmapped.load());
+        }
+
+        hold.unlock();
+
+        // A notification may have arrived between the last pop and the unlock above while it could
+        // not get the lock; take another turn for it.
+        if (!state->pending.load()) {
+            return;
+        }
+    }
+}
+
+namespace {
+
+void drain_alerts(lt::session* session, const cs_alert_callback callback, const bool include_unmapped) {
     std::vector<lt::alert*> events;
     std::string message_temp;
 
@@ -102,8 +209,10 @@ void on_events_available(lt::session* session, cs_alert_callback callback, bool 
                 auto state_alert = lt::alert_cast<lt::state_changed_alert>(alert);
                 cs_torrent_status_alert status_alert{};
 
-                status_alert.new_state = state_alert->state;
-                status_alert.old_state = state_alert->prev_state;
+                // Not a raw cast: libtorrent's state_t and cs_torrent_state are numbered differently
+                // (see state_mapping.h), and the managed side reads these as TorrentState.
+                status_alert.new_state = to_cs_torrent_state(state_alert->state);
+                status_alert.old_state = to_cs_torrent_state(state_alert->prev_state);
 
                 fill_info_hash_safe(state_alert->handle, status_alert.info_hash);
                 fill_event_info(&status_alert.alert, alert, cs_alert_type::alert_torrent_status, &message_temp);
@@ -357,6 +466,135 @@ void on_events_available(lt::session* session, cs_alert_callback callback, bool 
                 break;
             }
 
+            case lt::listen_failed_alert::alert_type: {
+                auto* listen_failed = lt::alert_cast<lt::listen_failed_alert>(alert);
+                cs_listen_failed_alert failed{};
+
+                failed.error_value = listen_failed->error.value();
+                failed.operation = static_cast<uint8_t>(listen_failed->op);
+                failed.socket_type = static_cast<uint8_t>(listen_failed->socket_type);
+                failed.port = listen_failed->port;
+                failed.listen_interface = listen_failed->listen_interface();
+
+                fill_event_info(&failed.alert, alert, cs_alert_type::alert_listen_failed, &message_temp);
+                callback(&failed);
+                break;
+            }
+
+            case lt::listen_succeeded_alert::alert_type: {
+                auto* listen_succeeded = lt::alert_cast<lt::listen_succeeded_alert>(alert);
+                cs_listen_succeeded_alert succeeded{};
+                std::string address_str = listen_succeeded->address.to_string();
+
+                succeeded.socket_type = static_cast<uint8_t>(listen_succeeded->socket_type);
+                succeeded.port = listen_succeeded->port;
+                succeeded.address = address_str.c_str();
+
+                fill_event_info(&succeeded.alert, alert, cs_alert_type::alert_listen_succeeded, &message_temp);
+                callback(&succeeded);
+                break;
+            }
+
+            case lt::portmap_alert::alert_type: {
+                auto* portmap = lt::alert_cast<lt::portmap_alert>(alert);
+                cs_portmap_alert mapped{};
+
+                mapped.external_port = portmap->external_port;
+                mapped.transport = portmap->map_transport == lt::portmap_transport::upnp
+                    ? cs_portmap_transport::portmap_transport_upnp
+                    : cs_portmap_transport::portmap_transport_natpmp;
+
+                fill_event_info(&mapped.alert, alert, cs_alert_type::alert_portmap, &message_temp);
+                callback(&mapped);
+                break;
+            }
+
+            case lt::portmap_error_alert::alert_type: {
+                auto* portmap_err = lt::alert_cast<lt::portmap_error_alert>(alert);
+                cs_portmap_error_alert map_error{};
+
+                map_error.error_value = portmap_err->error.value();
+                map_error.transport = portmap_err->map_transport == lt::portmap_transport::upnp
+                    ? cs_portmap_transport::portmap_transport_upnp
+                    : cs_portmap_transport::portmap_transport_natpmp;
+
+                fill_event_info(&map_error.alert, alert, cs_alert_type::alert_portmap_error, &message_temp);
+                callback(&map_error);
+                break;
+            }
+
+            case lt::external_ip_alert::alert_type: {
+                auto* external_ip = lt::alert_cast<lt::external_ip_alert>(alert);
+                cs_external_ip_alert ip_alert{};
+                std::string address_str = external_ip->external_address.to_string();
+
+                ip_alert.external_address = address_str.c_str();
+
+                fill_event_info(&ip_alert.alert, alert, cs_alert_type::alert_external_ip, &message_temp);
+                callback(&ip_alert);
+                break;
+            }
+
+            case lt::piece_finished_alert::alert_type: {
+                auto* piece_finished = lt::alert_cast<lt::piece_finished_alert>(alert);
+                cs_piece_finished_alert finished{};
+
+                finished.piece_index = static_cast<int32_t>(static_cast<int>(piece_finished->piece_index));
+                fill_info_hash_safe(piece_finished->handle, finished.info_hash);
+
+                fill_event_info(&finished.alert, alert, cs_alert_type::alert_piece_finished, &message_temp);
+                callback(&finished);
+                break;
+            }
+
+            case lt::hash_failed_alert::alert_type: {
+                auto* hash_failed = lt::alert_cast<lt::hash_failed_alert>(alert);
+                cs_hash_failed_alert failed{};
+
+                failed.piece_index = static_cast<int32_t>(static_cast<int>(hash_failed->piece_index));
+                fill_info_hash_safe(hash_failed->handle, failed.info_hash);
+
+                fill_event_info(&failed.alert, alert, cs_alert_type::alert_hash_failed, &message_temp);
+                callback(&failed);
+                break;
+            }
+
+            case lt::torrent_finished_alert::alert_type: {
+                auto* torrent_finished = lt::alert_cast<lt::torrent_finished_alert>(alert);
+                cs_torrent_finished_alert finished{};
+
+                fill_info_hash_safe(torrent_finished->handle, finished.info_hash);
+
+                fill_event_info(&finished.alert, alert, cs_alert_type::alert_torrent_finished, &message_temp);
+                callback(&finished);
+                break;
+            }
+
+            case lt::torrent_error_alert::alert_type: {
+                auto* torrent_error = lt::alert_cast<lt::torrent_error_alert>(alert);
+                cs_torrent_error_alert error_alert{};
+
+                error_alert.error_value = torrent_error->error.value();
+                error_alert.filename = torrent_error->filename();
+                fill_info_hash_safe(torrent_error->handle, error_alert.info_hash);
+
+                fill_event_info(&error_alert.alert, alert, cs_alert_type::alert_torrent_error, &message_temp);
+                callback(&error_alert);
+                break;
+            }
+
+            case lt::metadata_failed_alert::alert_type: {
+                auto* metadata_failed = lt::alert_cast<lt::metadata_failed_alert>(alert);
+                cs_metadata_failed_alert failed{};
+
+                failed.error_value = metadata_failed->error.value();
+                fill_info_hash_safe(metadata_failed->handle, failed.info_hash);
+
+                fill_event_info(&failed.alert, alert, cs_alert_type::alert_metadata_failed, &message_temp);
+                callback(&failed);
+                break;
+            }
+
             case lt::session_stats_alert::alert_type: {
                 auto* stats_alert = lt::alert_cast<lt::session_stats_alert>(alert);
                 cs_session_stats_alert session_stats{};
@@ -395,3 +633,5 @@ void on_events_available(lt::session* session, cs_alert_callback callback, bool 
         goto handle_events;
     }
 }
+
+} // namespace

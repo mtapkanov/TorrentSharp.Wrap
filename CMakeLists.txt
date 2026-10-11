@@ -34,8 +34,7 @@ add_library(tsw SHARED
         native/src/library.cpp
         native/src/events.cpp
         native/include/struct_align.h
-        native/include/settings.h
-        native/include/locks.hpp)
+        native/include/settings.h)
 
 # version.rc file for windows
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")

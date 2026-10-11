@@ -1,6 +1,9 @@
 using TorrentSharp.Wrap.Notifications;
 using JetBrains.Annotations;
 using TorrentSharp.Wrap.Configurations;
+using TorrentSharp.Wrap.Enums;
+using TorrentSharp.Wrap.Utils;
+using TorrentSharp.Wrap.Configurations.Settings;
 using Xunit.Abstractions;
 
 namespace TorrentSharp.Wrap.Tests;
@@ -67,6 +70,95 @@ public partial class TorrentClientTests : IDisposable
         {
             await PerformCleanup(torrentManager);
         }
+    }
+
+    [Fact]
+    public async Task ReconfiguringListenInterface_FiresListenSucceededNotification()
+    {
+        // The listen alerts fire the instant the sockets open. A client created with categories already
+        // on opens its default sockets inside the constructor, before any NotificationRaised subscriber
+        // can exist, so those alerts are simply gone - subscribing afterwards and waiting would be a
+        // race. Create it quiet instead (libtorrent's own default alert_mask is just `error`, and the
+        // library no longer adds any), subscribe, then turn the categories on together with a new listen
+        // interface so the sockets reopen with the subscriber already in place.
+        using var client = new TorrentClient(new TorrentClientConfig());
+        var notificationTcs = new TaskCompletionSource<SessionNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        client.NotificationRaised += (_, notification) =>
+        {
+            if (notification is ListenSucceededNotification or ListenFailedNotification)
+                notificationTcs.TrySetResult(notification);
+        };
+
+        var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+
+        client.UpdateSettings(new SettingsPack()
+            .Set(new AlertMask(NotificationCategories.Status))
+            .SetListenInterfaces(new IpInterface(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port))));
+
+        var notification = await notificationTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var succeeded = Assert.IsType<ListenSucceededNotification>(notification);
+        Assert.Equal(port, succeeded.Port);
+        Assert.Equal(System.Net.IPAddress.Loopback.ToString(), succeeded.Address);
+    }
+
+    [Fact]
+    public async Task SeveralClientsInOneProcess_EachKeepsReceivingItsOwnNotifications()
+    {
+        // Alert delivery used to share one process-wide try_lock between every session: while one
+        // session's alerts were being handled, another's wake-up was dropped - and since libtorrent
+        // only wakes the host when its queue goes from empty to non-empty, a dropped wake-up silenced
+        // that session for good. Several clients each reconfigured at the same moment is exactly the
+        // interleaving that triggered it.
+        const int clientCount = 6;
+        var clients = Enumerable.Range(0, clientCount).Select(_ => new TorrentClient(new TorrentClientConfig())).ToArray();
+
+        try
+        {
+            var received = clients
+                .Select(client =>
+                {
+                    var tcs = new TaskCompletionSource<ListenSucceededNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    client.NotificationRaised += (_, notification) =>
+                    {
+                        if (notification is ListenSucceededNotification succeeded)
+                            tcs.TrySetResult(succeeded);
+                    };
+                    return tcs;
+                })
+                .ToArray();
+
+            var ports = clients.Select(_ => FreeLoopbackPort()).ToArray();
+
+            for (var i = 0; i < clientCount; i++)
+            {
+                clients[i].UpdateSettings(new SettingsPack()
+                    .Set(new AlertMask(NotificationCategories.Status))
+                    .SetListenInterfaces(new IpInterface(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, ports[i]))));
+            }
+
+            var notifications = await Task.WhenAll(received.Select(tcs => tcs.Task)).WaitAsync(TimeSpan.FromSeconds(30));
+
+            Assert.Equal(ports.OrderBy(port => port), notifications.Select(n => n.Port).OrderBy(port => port));
+        }
+        finally
+        {
+            foreach (var client in clients)
+                client.Dispose();
+        }
+    }
+
+    private static int FreeLoopbackPort()
+    {
+        var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
     }
 
     [Fact]

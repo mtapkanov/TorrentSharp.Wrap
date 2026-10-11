@@ -14,5 +14,15 @@ public enum NotificationType
     Scrape = 9,
     ResumeData = 10,
     SessionStats = 11,
-    FileError = 12
+    FileError = 12,
+    ListenFailed = 13,
+    ListenSucceeded = 14,
+    Portmap = 15,
+    PortmapError = 16,
+    ExternalIp = 17,
+    PieceFinished = 18,
+    HashFailed = 19,
+    TorrentFinished = 20,
+    TorrentError = 21,
+    MetadataFailed = 22
 }

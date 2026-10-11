@@ -1,6 +1,7 @@
 using TorrentSharp.Wrap.Notifications;
 using JetBrains.Annotations;
 using TorrentSharp.Wrap.Configurations;
+using TorrentSharp.Wrap.Enums;
 using Xunit.Abstractions;
 
 namespace TorrentSharp.Wrap.Tests;
@@ -11,7 +12,10 @@ public partial class PieceStreamingTests : IDisposable
     private readonly TorrentClient _client = new(new TorrentClientConfig
     {
         ForceEncryption = true,
-        BlockSeeding = true
+        BlockSeeding = true,
+        // ReadPieceAsync resolves via read_piece_alert (Storage category) - nothing is force-enabled
+        // by the library anymore, so tests own their own required categories, same as any consumer.
+        NotificationCategories = NotificationCategories.Status | NotificationCategories.Storage | NotificationCategories.Tracker
     });
 
     private readonly ITestOutputHelper _output;
