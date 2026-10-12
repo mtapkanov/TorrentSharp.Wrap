@@ -144,7 +144,30 @@ jobs:
           dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }} TorrentSharp.Wrap/TorrentSharp.Wrap.csproj
           dotnet pack -c Release --no-build -o ./packages -p:PackageVersion=${{ steps.version.outputs.version }} TorrentSharp.Wrap.DependencyInjection/TorrentSharp.Wrap.DependencyInjection.csproj
 
-      - name: Publish
+      # The native package is by far the largest, and NuGet validates it for several minutes after the
+      # push, during which it can't be restored. The wrapper and DI packages depend on it by exact
+      # version, so they go out only once it is downloadable - otherwise the newest TorrentSharp.Wrap
+      # would point at a package that doesn't resolve yet.
+      - name: Publish native package
+        run: dotnet nuget push -s https://api.nuget.org/v3/index.json --skip-duplicate -k ${{ secrets.NUGET_KEY }} ./packages/TorrentSharp.Wrap.Native.*.nupkg
+
+      - name: Wait until the native package is available
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          index="https://api.nuget.org/v3-flatcontainer/torrentsharp.wrap.native/index.json"
+          for attempt in $(seq 1 90); do
+            if curl -fsS "$index" | grep -q "\"${version,,}\""; then
+              echo "TorrentSharp.Wrap.Native $version is available (check $attempt)"
+              exit 0
+            fi
+            echo "check $attempt: TorrentSharp.Wrap.Native $version is not available yet, waiting"
+            sleep 20
+          done
+          echo "::error::TorrentSharp.Wrap.Native $version was not available within 30 minutes"
+          exit 1
+
+      - name: Publish wrapper packages
+        # --skip-duplicate: the native package is matched by the glob again and is already there.
         run: dotnet nuget push -s https://api.nuget.org/v3/index.json --skip-duplicate -k ${{ secrets.NUGET_KEY }} ./packages/*.nupkg
 
       # After the NuGet push, so a release only ever appears for a version that actually shipped.
