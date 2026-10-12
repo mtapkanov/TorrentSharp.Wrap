@@ -81,11 +81,15 @@ jobs:
         if: matrix.targetname == 'windows'
         run: cp build/Release/*.dll ${{ env.ARCHIVE_DIR }}
 
+      # Only hands the native libraries to the publish job of this same run, so the shortest retention
+      # there is: artifact storage is a quota shared by every repository on the account, and the default
+      # 90 days of these filled it up.
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.targetname }}-${{ matrix.arch }}
           path: ${{ env.ARCHIVE_DIR }}/*
+          retention-days: 1
 
   publish:
     name: Publish packages
