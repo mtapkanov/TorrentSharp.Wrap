@@ -175,7 +175,8 @@ struct TSW_STRUCT cs_scrape_alert {
 
 // covers both save_resume_data_alert and save_resume_data_failed_alert, differentiated by
 // `succeeded`. buffer holds the bencoded resume data - only valid for the duration of the
-// callback; nullptr if !succeeded.
+// callback; nullptr if !succeeded. not_modified marks the one failure that isn't one: a save
+// requested only-if-modified, for a torrent with nothing new to save.
 struct TSW_STRUCT cs_resume_data_alert {
     cs_alert alert;
 
@@ -185,6 +186,8 @@ struct TSW_STRUCT cs_resume_data_alert {
 
     int32_t size;
     const char *buffer;
+
+    bool not_modified;
 };
 
 // session-wide, not associated with any particular torrent (no info_hash field). values is indexed

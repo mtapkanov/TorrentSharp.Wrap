@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <unordered_set>
 #include <boost/system/system_error.hpp>
 #include <libtorrent/fingerprint.hpp>
@@ -341,7 +342,7 @@ void clear_event_callback(lt::session* session)
 // lt::torrent_info's constructors throw on malformed input (invalid bencoding, missing
 // required keys, etc.) - catch here so a corrupt/hostile .torrent doesn't crash the process
 // with an unhandled C++ exception at the P/Invoke boundary, which can't marshal it anyway.
-lt::torrent_info* create_torrent_bytes(const char* data, long length)
+lt::torrent_info* create_torrent_bytes(const char* data, const int64_t length)
 {
     try
     {
@@ -373,36 +374,76 @@ void destroy_torrent(lt::torrent_info* torrent)
     delete torrent;
 }
 
-// attach a torrent to the session, returning a handle that can be used to control the download.
-// the torrent info handle is copied, and can be freed after the call to attach_torrent with a call to destroy_torrent_info.
-// resume_data/resume_data_len are optional (nullptr/0 to skip).
-lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torrent, const char* save_path, const char* resume_data, const int32_t resume_data_len, const bool default_dont_download)
+// add_torrent throws on params it can't use, and an exception escaping into managed code takes the whole
+// process down. Returns nullptr instead.
+static lt::torrent_handle* add_torrent_or_null(lt::session* session, const lt::add_torrent_params& params)
 {
-    if (session == nullptr || torrent == nullptr)
+    try
+    {
+        const auto handle = new lt::torrent_handle(session->add_torrent(params));
+
+        if (handle->is_valid())
+        {
+            register_live_handle(handle);
+            return handle;
+        }
+
+        delete handle;
+        return nullptr;
+    }
+    catch (const std::exception&)
     {
         return nullptr;
     }
+}
 
-    lt::add_torrent_params params;
-
-    if (resume_data != nullptr && resume_data_len > 0)
+// resume data is only an optimisation: if add_torrent won't take it, attach without it rather than fail.
+static lt::torrent_handle* add_torrent_with_resume_fallback(
+    lt::session* session, const std::optional<lt::add_torrent_params>& with_resume, const lt::add_torrent_params& without_resume)
+{
+    if (with_resume.has_value())
     {
-        lt::error_code ec;
-        auto resume_params = lt::read_resume_data(lt::span(resume_data, resume_data_len), ec);
-
-        // malformed/stale resume data shouldn't fail the whole attach - just fall back to a
-        // regular attach without it.
-        if (!ec)
+        if (const auto handle = add_torrent_or_null(session, *with_resume))
         {
-            params = std::move(resume_params);
+            return handle;
         }
     }
 
-    std::string save_path_copy(save_path);
+    return add_torrent_or_null(session, without_resume);
+}
 
-    if (!save_path_copy.empty())
+static std::optional<lt::add_torrent_params> read_resume_params(const char* resume_data, const int32_t resume_data_len)
+{
+    if (resume_data == nullptr || resume_data_len <= 0)
     {
-        params.save_path = save_path_copy;
+        return std::nullopt;
+    }
+
+    lt::error_code ec;
+    auto params = lt::read_resume_data(lt::span(resume_data, resume_data_len), ec);
+
+    // malformed/stale resume data shouldn't fail the whole attach - just fall back to a
+    // regular attach without it.
+    if (ec)
+    {
+        return std::nullopt;
+    }
+
+    return params;
+}
+
+// resume data belongs to one torrent; saved for a different one it would either be rejected by
+// add_torrent or, for a magnet (where it takes over entirely), silently attach that other torrent.
+static bool same_torrent(const lt::info_hash_t& a, const lt::info_hash_t& b)
+{
+    return (a.has_v1() && a.v1 == b.v1) || (a.has_v2() && a.v2 == b.v2);
+}
+
+static void apply_attach_options(lt::add_torrent_params& params, const char* save_path, const bool default_dont_download)
+{
+    if (save_path != nullptr && *save_path != '\0')
+    {
+        params.save_path = std::string(save_path);
     }
 
     // enable paused-by-default, disable auto-management
@@ -413,22 +454,41 @@ lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torre
     {
         params.flags |= lt::torrent_flags::default_dont_download;
     }
+}
 
-    // set torrent info - make_shared creates a copy. Always taken from the caller-supplied
-    // torrent, even when resume data was applied above, since that's the definitive metadata the
-    // caller asked to attach - resume data mainly contributes piece/file state, not authority over
-    // which torrent this handle represents.
-    params.ti = std::make_shared<lt::torrent_info>(*torrent);
-    const auto handle = new lt::torrent_handle(session->add_torrent(params));
-
-    if (handle->is_valid())
+// attach a torrent to the session, returning a handle that can be used to control the download.
+// the torrent info handle is copied, and can be freed after the call to attach_torrent with a call to destroy_torrent_info.
+// resume_data/resume_data_len are optional (nullptr/0 to skip).
+lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torrent, const char* save_path, const char* resume_data, const int32_t resume_data_len, const bool default_dont_download)
+{
+    if (session == nullptr || torrent == nullptr)
     {
-        register_live_handle(handle);
-        return handle;
+        return nullptr;
     }
 
-    delete handle;
-    return nullptr;
+    // set torrent info - make_shared creates a copy. Always taken from the caller-supplied
+    // torrent, even when resume data is applied, since that's the definitive metadata the
+    // caller asked to attach - resume data mainly contributes piece/file state, not authority over
+    // which torrent this handle represents.
+    const auto ti = std::make_shared<lt::torrent_info>(*torrent);
+
+    lt::add_torrent_params plain;
+    plain.ti = ti;
+    apply_attach_options(plain, save_path, default_dont_download);
+
+    auto resumed = read_resume_params(resume_data, resume_data_len);
+    if (resumed.has_value() && !same_torrent(ti->info_hashes(), resumed->info_hashes))
+    {
+        resumed.reset();
+    }
+
+    if (resumed.has_value())
+    {
+        resumed->ti = ti;
+        apply_attach_options(*resumed, save_path, default_dont_download);
+    }
+
+    return add_torrent_with_resume_fallback(session, resumed, plain);
 }
 
 // resume_data/resume_data_len are optional (nullptr/0 to skip).
@@ -440,51 +500,30 @@ lt::torrent_handle* attach_magnet(lt::session* session, const char* magnet_uri, 
     }
 
     lt::error_code ec;
-    lt::add_torrent_params params = lt::parse_magnet_uri(std::string(magnet_uri), ec);
+    lt::add_torrent_params plain = lt::parse_magnet_uri(std::string(magnet_uri), ec);
 
     if (ec)
     {
         return nullptr;
     }
 
-    if (resume_data != nullptr && resume_data_len > 0)
-    {
-        lt::error_code resume_ec;
-        auto resume_params = lt::read_resume_data(lt::span(resume_data, resume_data_len), resume_ec);
+    apply_attach_options(plain, save_path, default_dont_download);
 
-        // resume data, once it parses, fully describes an add_torrent_params (trackers, and - once
-        // metadata was fetched before it was saved - the torrent_info itself), richer than what a
-        // bare magnet URI carries, so it takes over entirely. Falls back to the magnet-only params
-        // on a parse failure rather than fail the whole attach over stale/corrupt resume data.
-        if (!resume_ec)
-        {
-            params = std::move(resume_params);
-        }
+    // resume data, once it parses, fully describes an add_torrent_params (trackers, and - once
+    // metadata was fetched before it was saved with the info dict - the torrent_info itself), richer
+    // than what a bare magnet URI carries, so it takes over entirely.
+    auto resumed = read_resume_params(resume_data, resume_data_len);
+    if (resumed.has_value() && !same_torrent(plain.info_hashes, resumed->info_hashes))
+    {
+        resumed.reset();
     }
 
-    if (save_path != nullptr && *save_path != '\0')
+    if (resumed.has_value())
     {
-        params.save_path = std::string(save_path);
+        apply_attach_options(*resumed, save_path, default_dont_download);
     }
 
-    params.flags |= lt::torrent_flags::paused;
-    params.flags &= ~lt::torrent_flags::auto_managed;
-
-    if (default_dont_download)
-    {
-        params.flags |= lt::torrent_flags::default_dont_download;
-    }
-
-    const auto handle = new lt::torrent_handle(session->add_torrent(params));
-
-    if (handle->is_valid())
-    {
-        register_live_handle(handle);
-        return handle;
-    }
-
-    delete handle;
-    return nullptr;
+    return add_torrent_with_resume_fallback(session, resumed, plain);
 }
 
 // after detaching the torrent, the torrent handle is no longer valid.
@@ -534,7 +573,40 @@ void detach_torrent(lt::session* session, lt::torrent_handle* torrent)
 // (see events.cpp's save_resume_data_alert/save_resume_data_failed_alert handling).
 void save_torrent_resume_data(lt::torrent_handle* torrent)
 {
-    with_live_handle(torrent, [](lt::torrent_handle& h) { h.save_resume_data(); });
+    save_torrent_resume_data_flags(torrent, 0);
+}
+
+// flags for save_torrent_resume_data_flags - mirrored by ResumeDataFlags on the managed side.
+constexpr uint32_t tsw_resume_flush_disk_cache = 1u << 0;
+constexpr uint32_t tsw_resume_save_info_dict = 1u << 1;
+constexpr uint32_t tsw_resume_if_modified = 1u << 2;
+
+void save_torrent_resume_data_flags(lt::torrent_handle* torrent, const uint32_t flags)
+{
+    lt::resume_data_flags_t lt_flags{};
+
+    if (flags & tsw_resume_flush_disk_cache)
+    {
+        lt_flags |= lt::torrent_handle::flush_disk_cache;
+    }
+
+    if (flags & tsw_resume_save_info_dict)
+    {
+        lt_flags |= lt::torrent_handle::save_info_dict;
+    }
+
+    // only_if_modified without its if_counters_changed: a running torrent's active-time counters move
+    // every second, so with them nothing would ever count as unchanged. A skipped save is reported as a
+    // failed save with resume_data_not_modified (see events.cpp).
+    if (flags & tsw_resume_if_modified)
+    {
+        lt_flags |= lt::torrent_handle::if_download_progress
+            | lt::torrent_handle::if_config_changed
+            | lt::torrent_handle::if_state_changed
+            | lt::torrent_handle::if_metadata_changed;
+    }
+
+    with_live_handle(torrent, [lt_flags](lt::torrent_handle& h) { h.save_resume_data(lt_flags); });
 }
 
 // returns a heap-allocated copy of the torrent_info from a torrent_handle (available after metadata is fetched).
@@ -641,6 +713,37 @@ void destroy_torrent_info(torrent_metadata* info)
     delete info;
 }
 
+// write_torrent_file_buf refuses a v2/hybrid torrent whose piece layers aren't all known - true of
+// metadata that came from peers before the download finished. The info dict on its own still makes a
+// usable .torrent (the missing layers come from peers again, and a hybrid's v1 hashes can check the data
+// meanwhile), so write that rather than nothing. allow_missing_piece_layer alone isn't enough: libtorrent
+// 2.0 only honours it when there are no merkle trees at all, and resume data always carries them for a
+// v2 torrent - an incomplete one fails as an invalid piece layer whatever the flag says.
+static std::vector<char> write_torrent_buf(const lt::add_torrent_params& params)
+{
+    try
+    {
+        return lt::write_torrent_file_buf(params, {});
+    }
+    catch (const std::exception&)
+    {
+        auto without_trees = params;
+        without_trees.merkle_trees.clear();
+        without_trees.merkle_tree_mask.clear();
+        without_trees.verified_leaf_hashes.clear();
+        return lt::write_torrent_file_buf(without_trees, lt::write_flags::allow_missing_piece_layer);
+    }
+}
+
+static void copy_out(const std::vector<char>& buf, char** out_data, int64_t* out_size)
+{
+    const auto alloc = new char[buf.size()];
+    std::copy(buf.begin(), buf.end(), alloc);
+
+    *out_data = alloc;
+    *out_size = static_cast<int64_t>(buf.size());
+}
+
 bool save_torrent_to_file(lt::torrent_info* torrent, const char* file_path)
 {
     if (torrent == nullptr || file_path == nullptr)
@@ -653,7 +756,7 @@ bool save_torrent_to_file(lt::torrent_info* torrent, const char* file_path)
         lt::add_torrent_params params;
         params.ti = std::make_shared<lt::torrent_info>(*torrent);
 
-        const auto buf = lt::write_torrent_file_buf(params, {});
+        const auto buf = write_torrent_buf(params);
 
         std::ofstream out(file_path, std::ios::binary);
 
@@ -672,7 +775,7 @@ bool save_torrent_to_file(lt::torrent_info* torrent, const char* file_path)
     }
 }
 
-void get_torrent_bytes(lt::torrent_info* torrent, char** out_data, long* out_size)
+void get_torrent_bytes(lt::torrent_info* torrent, char** out_data, int64_t* out_size)
 {
     if (torrent == nullptr || out_data == nullptr || out_size == nullptr)
     {
@@ -684,18 +787,49 @@ void get_torrent_bytes(lt::torrent_info* torrent, char** out_data, long* out_siz
         lt::add_torrent_params params;
         params.ti = std::make_shared<lt::torrent_info>(*torrent);
 
-        const auto buf = lt::write_torrent_file_buf(params, {});
-
-        const auto alloc = new char[buf.size()];
-        std::copy(buf.begin(), buf.end(), alloc);
-
-        *out_data = alloc;
-        *out_size = static_cast<long>(buf.size());
+        copy_out(write_torrent_buf(params), out_data, out_size);
     }
     catch (const std::exception&)
     {
         *out_data = nullptr;
         *out_size = 0;
+    }
+}
+
+bool create_torrent_bytes_from_resume_data(const char* resume_data, const int64_t resume_data_len, char** out_data, int64_t* out_size)
+{
+    if (out_data == nullptr || out_size == nullptr)
+    {
+        return false;
+    }
+
+    *out_data = nullptr;
+    *out_size = 0;
+
+    if (resume_data == nullptr || resume_data_len <= 0)
+    {
+        return false;
+    }
+
+    try
+    {
+        lt::error_code ec;
+        const auto params = lt::read_resume_data(lt::span(resume_data, resume_data_len), ec);
+
+        // no info dict: saved without save_info_dict, or before a magnet's metadata arrived.
+        if (ec || !params.ti)
+        {
+            return false;
+        }
+
+        // the trackers and web seeds come from params itself, not from ti - the .torrent gets the
+        // torrent's current ones, including any added since it was first attached.
+        copy_out(write_torrent_buf(params), out_data, out_size);
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
     }
 }
 

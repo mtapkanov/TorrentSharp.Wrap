@@ -16,4 +16,7 @@ public struct ResumeDataEvent
 
     public int Size;
     public IntPtr Buffer;
+
+    [MarshalAs(UnmanagedType.U1)]
+    public bool NotModified;
 }

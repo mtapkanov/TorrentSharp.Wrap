@@ -43,11 +43,12 @@ extern "C" {
 
     // torrent control
     TSW_EXPORT lt::torrent_info* create_torrent_file(const char* file_path);
-    TSW_EXPORT lt::torrent_info* create_torrent_bytes(const char* data, long length);
+    TSW_EXPORT lt::torrent_info* create_torrent_bytes(const char* data, int64_t length);
     TSW_EXPORT void destroy_torrent(lt::torrent_info* torrent);
 
     // resume_data/resume_data_len are optional (nullptr/0 to skip) - a buffer previously returned
-    // by save_torrent_resume_data, parsed via lt::read_resume_data and merged into the attach.
+    // by save_torrent_resume_data, parsed via lt::read_resume_data and merged into the attach. Resume
+    // data that doesn't parse, or that add_torrent rejects, is dropped and the attach goes ahead without it.
     // default_dont_download, when true, starts every file (present or discovered later via magnet
     // metadata) at dont_download priority instead of the usual default.
     TSW_EXPORT lt::torrent_handle* attach_torrent(lt::session* session, lt::torrent_info* torrent, const char* save_path, const char* resume_data, int32_t resume_data_len, bool default_dont_download);
@@ -56,6 +57,12 @@ extern "C" {
 
     // triggers an async save of a torrent's resume data; completion is reported via alert_resume_data.
     TSW_EXPORT void save_torrent_resume_data(lt::torrent_handle* torrent);
+    // same, with tsw_resume_* flags (see library.cpp) - mirrored by ResumeDataFlags on the managed side.
+    TSW_EXPORT void save_torrent_resume_data_flags(lt::torrent_handle* torrent, uint32_t flags);
+
+    // turns resume data saved with the info dict into a .torrent file (trackers and web seeds included);
+    // false if it has no info dict or can't be read. *out_data must be freed with free_torrent_bytes.
+    TSW_EXPORT bool create_torrent_bytes_from_resume_data(const char* resume_data, int64_t resume_data_len, char** out_data, int64_t* out_size);
 
     TSW_EXPORT lt::torrent_info* get_handle_torrent_info(lt::torrent_handle* handle);
     TSW_EXPORT void get_torrent_handle_info_hash(lt::torrent_handle* handle, char* hash_out);
@@ -65,7 +72,7 @@ extern "C" {
     TSW_EXPORT void destroy_torrent_info(torrent_metadata* info);
 
     TSW_EXPORT bool save_torrent_to_file(lt::torrent_info* torrent, const char* file_path);
-    TSW_EXPORT void get_torrent_bytes(lt::torrent_info* torrent, char** out_data, long* out_size);
+    TSW_EXPORT void get_torrent_bytes(lt::torrent_info* torrent, char** out_data, int64_t* out_size);
     TSW_EXPORT void free_torrent_bytes(char* data);
 
     // file listing

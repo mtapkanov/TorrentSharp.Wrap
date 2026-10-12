@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using TorrentSharp.Wrap.Imports;
 using TorrentSharp.Wrap.Imports.Structs;
@@ -134,6 +135,41 @@ public class TorrentInfo
             var result = new byte[size];
             Marshal.Copy(data, result, 0, (int)size);
             return result;
+        }
+        finally
+        {
+            Methods.FreeTorrentBytes(data);
+        }
+    }
+
+    /// <summary>
+    /// Turns resume data saved with <see cref="Enums.ResumeDataFlags.SaveInfoDict"/> into .torrent file
+    /// bytes - the usual way to keep a .torrent for a torrent added from a magnet link. The trackers and
+    /// web seeds are the ones the resume data has, i.e. the torrent's current ones.
+    /// </summary>
+    /// <param name="resumeData">Resume data from <see cref="TorrentManager.SaveResumeDataAsync(Enums.ResumeDataFlags, CancellationToken, TimeSpan?)"/></param>
+    /// <param name="torrentBytes">The .torrent file's contents, when this returns <c>true</c></param>
+    /// <returns><c>false</c> if the resume data has no info dict (saved without
+    /// <see cref="Enums.ResumeDataFlags.SaveInfoDict"/>, or before a magnet's metadata arrived) or can't be read</returns>
+    public static bool TryCreateBytesFromResumeData(byte[] resumeData, [NotNullWhen(true)] out byte[]? torrentBytes)
+    {
+        torrentBytes = null;
+
+        if (!Methods.CreateTorrentBytesFromResumeData(resumeData, resumeData.Length, out var data, out var size))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (data == IntPtr.Zero || size <= 0)
+            {
+                return false;
+            }
+
+            torrentBytes = new byte[size];
+            Marshal.Copy(data, torrentBytes, 0, (int)size);
+            return true;
         }
         finally
         {

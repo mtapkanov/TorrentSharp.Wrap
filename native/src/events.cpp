@@ -453,6 +453,7 @@ void drain_alerts(lt::session* session, const cs_alert_callback callback, const 
                 resume_data.succeeded = false;
                 resume_data.size = 0;
                 resume_data.buffer = nullptr;
+                resume_data.not_modified = failed_alert->error == lt::errors::resume_data_not_modified;
 
                 fill_info_hash_safe(failed_alert->handle, resume_data.info_hash);
                 fill_event_info(&resume_data.alert, alert, cs_alert_type::alert_resume_data, &message_temp);

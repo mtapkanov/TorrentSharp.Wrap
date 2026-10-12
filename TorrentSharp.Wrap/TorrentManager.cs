@@ -33,7 +33,7 @@ public class TorrentManager
 
     // save_resume_data у libtorrent тоже не принимает пользовательский токен запроса, так что
     // одновременно может быть только один ожидающий вызов SaveResumeDataAsync - как с _pendingStorageMove.
-    private TaskCompletionSource<byte[]>? _pendingResumeDataSave;
+    private TaskCompletionSource<byte[]?>? _pendingResumeDataSave;
 
     private bool _detached;
     private int _detachRequested;
@@ -538,14 +538,32 @@ public class TorrentManager
     /// <returns>The bencoded resume data</returns>
     /// <exception cref="IOException">The resume data failed to save.</exception>
     /// <exception cref="TimeoutException">No result arrived within <paramref name="timeout"/></exception>
-    public async Task<byte[]> SaveResumeDataAsync(CancellationToken cancellationToken, TimeSpan? timeout = null)
+    public async Task<byte[]> SaveResumeDataAsync(CancellationToken cancellationToken, TimeSpan? timeout = null) =>
+        // Only IfModified can complete without data.
+        (await SaveResumeDataAsync(ResumeDataFlags.None, cancellationToken, timeout).ConfigureAwait(false))!;
+
+    /// <summary>
+    /// Same as <see cref="SaveResumeDataAsync(CancellationToken, TimeSpan?)"/>, with options - see
+    /// <see cref="ResumeDataFlags"/>.
+    /// </summary>
+    /// <remarks>
+    /// The result arrives through the same notification dispatch as every other alert, so never block
+    /// a notification handler on it.
+    /// </remarks>
+    /// <param name="flags">What to include, and whether to skip an unchanged torrent</param>
+    /// <param name="cancellationToken">Cancels the wait; the save itself keeps going regardless</param>
+    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to 30s.</param>
+    /// <returns>The bencoded resume data, or <c>null</c> when <see cref="ResumeDataFlags.IfModified"/> skipped the save</returns>
+    /// <exception cref="IOException">The resume data failed to save.</exception>
+    /// <exception cref="TimeoutException">No result arrived within <paramref name="timeout"/></exception>
+    public async Task<byte[]?> SaveResumeDataAsync(ResumeDataFlags flags, CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
         ObjectDisposedException.ThrowIf(_detached, this);
 
-        var taskCompletionSource = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var taskCompletionSource = new TaskCompletionSource<byte[]?>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pendingResumeDataSave = taskCompletionSource;
 
-        Methods.SaveTorrentResumeData(TorrentSessionHandle);
+        Methods.SaveTorrentResumeDataWithFlags(TorrentSessionHandle, (uint)flags);
 
         return await taskCompletionSource.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
     }
@@ -762,11 +780,15 @@ public class TorrentManager
     }
 
     // завершает ожидающий вызов SaveResumeDataAsync, если он есть.
-    internal void OnResumeDataSaved(bool succeeded, byte[] data)
+    internal void OnResumeDataSaved(bool succeeded, bool notModified, byte[] data)
     {
         if (succeeded)
         {
             _pendingResumeDataSave?.TrySetResult(data);
+        }
+        else if (notModified)
+        {
+            _pendingResumeDataSave?.TrySetResult(null);
         }
         else
         {

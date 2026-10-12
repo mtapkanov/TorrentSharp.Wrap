@@ -280,7 +280,11 @@ public class TorrentClient : IDisposable
             throw new InvalidOperationException("A torrent with the same info-hash is already attached to this session.");
         }
 
-        var manager = new TorrentManager(handle, savePath, infoHash, null);
+        // Resume data saved with its info dict brings the metadata along, and libtorrent raises no
+        // metadata_received_alert for metadata it had from the start - so pick it up here, or Info would
+        // stay null and WaitForMetadata would never return.
+        var infoHandle = resumeData is null ? IntPtr.Zero : Methods.GetHandleTorrentInfo(handle);
+        var manager = new TorrentManager(handle, savePath, infoHash, infoHandle == IntPtr.Zero ? null : new TorrentInfo(infoHandle));
         _attachedManagers.TryAdd(infoHash, manager);
 
         return manager;
@@ -529,7 +533,7 @@ public class TorrentClient : IDisposable
         }
 
         // резолвит ожидающий вызов SaveResumeDataAsync, если он есть, до того как уведомление уйдёт наружу
-        subject.OnResumeDataSaved(resumeEvent.Succeeded, data);
+        subject.OnResumeDataSaved(resumeEvent.Succeeded, resumeEvent.NotModified, data);
 
         return new ResumeDataNotification(resumeEvent, subject, data);
     }
