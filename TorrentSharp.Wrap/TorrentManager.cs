@@ -35,12 +35,16 @@ public class TorrentManager
     // одновременно может быть только один ожидающий вызов SaveResumeDataAsync - как с _pendingStorageMove.
     private TaskCompletionSource<byte[]?>? _pendingResumeDataSave;
 
+    // The client's Timeouts.Default, read at each call - it can change while the torrent is attached.
+    private readonly Func<TimeSpan> _defaultTimeout;
+
     private bool _detached;
     private int _detachRequested;
     private IReadOnlyList<TorrentManagerFile>? _files;
 
-    internal TorrentManager(IntPtr torrentSessionHandle, string savePath, string infoHash, TorrentInfo? info)
+    internal TorrentManager(IntPtr torrentSessionHandle, string savePath, string infoHash, TorrentInfo? info, Func<TimeSpan> defaultTimeout)
     {
+        _defaultTimeout = defaultTimeout;
         Info = info;
         InfoHash = infoHash;
         TorrentSessionHandle = torrentSessionHandle;
@@ -233,7 +237,7 @@ public class TorrentManager
     /// </remarks>
     /// <param name="trackerIndex">Index of the tracker to scrape, or <c>-1</c> for the last working tracker</param>
     /// <param name="cancellationToken">Cancels the wait; the scrape itself keeps going regardless</param>
-    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to 30s.</param>
+    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to the client's default timeout (30 s unless configured).</param>
     /// <returns>Peer counts reported by the tracker</returns>
     /// <exception cref="IOException">The scrape request failed.</exception>
     /// <exception cref="TimeoutException">No result arrived within <paramref name="timeout"/></exception>
@@ -246,7 +250,7 @@ public class TorrentManager
 
         Methods.ScrapeTorrentTracker(TorrentSessionHandle, trackerIndex);
 
-        return await taskCompletionSource.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        return await taskCompletionSource.Task.WaitAsync(timeout ?? _defaultTimeout(), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -466,7 +470,7 @@ public class TorrentManager
     /// <param name="fileIndex">Index of the file to rename, matching its position in <see cref="Files"/></param>
     /// <param name="newName">New name for the file</param>
     /// <param name="cancellationToken">Cancels the wait; the rename itself keeps going regardless</param>
-    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to 30s.</param>
+    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to the client's default timeout (30 s unless configured).</param>
     /// <exception cref="IOException">The file failed to rename on disk.</exception>
     /// <exception cref="TimeoutException">No result arrived within <paramref name="timeout"/></exception>
     public async Task RenameFileAsync(int fileIndex, string newName, CancellationToken cancellationToken, TimeSpan? timeout = null)
@@ -481,7 +485,7 @@ public class TorrentManager
 
         try
         {
-            var succeeded = await taskCompletionSource.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+            var succeeded = await taskCompletionSource.Task.WaitAsync(timeout ?? _defaultTimeout(), cancellationToken).ConfigureAwait(false);
 
             if (!succeeded)
                 throw new IOException($"Failed to rename file {fileIndex}.");
@@ -503,7 +507,7 @@ public class TorrentManager
     /// </remarks>
     /// <param name="newPath">Destination directory for the torrent's contents</param>
     /// <param name="cancellationToken">Cancels the wait; the move itself keeps going regardless</param>
-    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to 30s.</param>
+    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to the client's default timeout (30 s unless configured).</param>
     /// <exception cref="IOException">The storage failed to move.</exception>
     /// <exception cref="TimeoutException">No result arrived within <paramref name="timeout"/></exception>
     public async Task MoveStorageAsync(string newPath, CancellationToken cancellationToken, TimeSpan? timeout = null)
@@ -515,7 +519,7 @@ public class TorrentManager
 
         Methods.MoveTorrentStorage(TorrentSessionHandle, newPath);
 
-        var succeeded = await taskCompletionSource.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        var succeeded = await taskCompletionSource.Task.WaitAsync(timeout ?? _defaultTimeout(), cancellationToken).ConfigureAwait(false);
 
         if (!succeeded)
             throw new IOException("Failed to move torrent storage.");
@@ -534,7 +538,7 @@ public class TorrentManager
     /// cancelled).
     /// </remarks>
     /// <param name="cancellationToken">Cancels the wait; the save itself keeps going regardless</param>
-    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to 30s.</param>
+    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to the client's default timeout (30 s unless configured).</param>
     /// <returns>The bencoded resume data</returns>
     /// <exception cref="IOException">The resume data failed to save.</exception>
     /// <exception cref="TimeoutException">No result arrived within <paramref name="timeout"/></exception>
@@ -552,7 +556,7 @@ public class TorrentManager
     /// </remarks>
     /// <param name="flags">What to include, and whether to skip an unchanged torrent</param>
     /// <param name="cancellationToken">Cancels the wait; the save itself keeps going regardless</param>
-    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to 30s.</param>
+    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to the client's default timeout (30 s unless configured).</param>
     /// <returns>The bencoded resume data, or <c>null</c> when <see cref="ResumeDataFlags.IfModified"/> skipped the save</returns>
     /// <exception cref="IOException">The resume data failed to save.</exception>
     /// <exception cref="TimeoutException">No result arrived within <paramref name="timeout"/></exception>
@@ -565,7 +569,7 @@ public class TorrentManager
 
         Methods.SaveTorrentResumeDataWithFlags(TorrentSessionHandle, (uint)flags);
 
-        return await taskCompletionSource.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        return await taskCompletionSource.Task.WaitAsync(timeout ?? _defaultTimeout(), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -687,7 +691,8 @@ public class TorrentManager
     /// Without this, seeking into a not-yet-downloaded part of a torrent (or missing a
     /// read_piece_alert - libtorrent's set_alert_notify only re-fires on an empty-to-non-empty
     /// queue transition, not for every alert added while a batch is already draining) would hang
-    /// this call forever, since nothing else would ever complete the pending read. Defaults to 30s.
+    /// this call forever, since nothing else would ever complete the pending read. Defaults to the
+    /// client's default timeout (30 s unless configured).
     /// </param>
     /// <exception cref="IOException">The piece failed to read from the disk.</exception>
     /// <exception cref="TimeoutException">The piece didn't arrive within <paramref name="timeout"/></exception>
@@ -703,7 +708,7 @@ public class TorrentManager
 
         try
         {
-            return await taskCompletionSource.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+            return await taskCompletionSource.Task.WaitAsync(timeout ?? _defaultTimeout(), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -719,7 +724,7 @@ public class TorrentManager
     /// <param name="fileIndex">Index of the file to stream, matching its position in <see cref="Files"/></param>
     /// <param name="pieceTimeout">
     /// Upper bound on waiting for any single piece the stream needs to read - see
-    /// <see cref="ReadPieceAsync"/>'s own <c>timeout</c> parameter. Defaults to 30s.
+    /// <see cref="ReadPieceAsync"/>'s own <c>timeout</c> parameter. Defaults to the client's default timeout.
     /// </param>
     /// <exception cref="InvalidOperationException">Torrent metadata has not been received yet</exception>
     public Stream OpenFileStream(int fileIndex, TimeSpan? pieceTimeout = null)

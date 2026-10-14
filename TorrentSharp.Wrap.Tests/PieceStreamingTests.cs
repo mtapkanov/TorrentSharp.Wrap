@@ -9,14 +9,12 @@ namespace TorrentSharp.Wrap.Tests;
 [TestSubject(typeof(TorrentManager))]
 public partial class PieceStreamingTests : IDisposable
 {
-    private readonly TorrentClient _client = new(new TorrentClientConfig
-    {
-        ForceEncryption = true,
-        BlockSeeding = true,
+    private readonly TorrentClient _client = new(options => options
+        .Privacy(privacy => privacy.Encryption(EncryptionPolicy.Forced))
+        .Limits(limits => limits.SeedingOutgoingConnections(false))
         // ReadPieceAsync resolves via read_piece_alert (Storage category) - nothing is force-enabled
         // by the library anymore, so tests own their own required categories, same as any consumer.
-        NotificationCategories = NotificationCategories.Status | NotificationCategories.Storage | NotificationCategories.Tracker
-    });
+        .Notifications(notifications => notifications.Categories(NotificationCategories.Status | NotificationCategories.Storage | NotificationCategories.Tracker)));
 
     private readonly ITestOutputHelper _output;
     private readonly string _tempSavePath;

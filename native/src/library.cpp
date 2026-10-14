@@ -17,6 +17,7 @@
 #include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/peer_info.hpp>
 #include <libtorrent/read_resume_data.hpp>
+#include <libtorrent/session_params.hpp>
 #include <libtorrent/session_stats.hpp>
 #include <libtorrent/torrent_flags.hpp>
 #include <libtorrent/torrent_handle.hpp>
@@ -157,9 +158,23 @@ namespace
 
 extern "C" {
 
-lt::session* create_session(lt::settings_pack* pack)
+lt::session* create_session(lt::settings_pack* pack, const char* state, const int64_t state_len)
 {
     lt::session_params params;
+
+    // Only the DHT state is read back - settings always come from the caller's pack, and the IP filter
+    // from its own call. Unreadable state is ignored: the DHT then bootstraps from scratch, as it did
+    // before there was any state to pass.
+    if (state != nullptr && state_len > 0)
+    {
+        try
+        {
+            params = lt::read_session_params(lt::span(state, state_len), lt::session::save_dht_state);
+        }
+        catch (const std::exception&)
+        {
+        }
+    }
 
     if (pack != nullptr)
     {
@@ -211,40 +226,38 @@ void add_session_dht_node(lt::session* session, const char* host, const int32_t 
 }
 
 // reads the current filter, adds one rule, writes it back - rules accumulate across calls.
-void add_session_ip_filter_rule(lt::session* session, const char* first_ip, const char* last_ip, const bool blocked)
-{
-    if (session == nullptr || first_ip == nullptr || last_ip == nullptr)
-    {
-        return;
-    }
-
-    lt::error_code ec;
-
-    const auto first = lt::make_address(first_ip, ec);
-    if (ec)
-    {
-        return;
-    }
-
-    const auto last = lt::make_address(last_ip, ec);
-    if (ec)
-    {
-        return;
-    }
-
-    auto filter = session->get_ip_filter();
-    filter.add_rule(first, last, blocked ? lt::ip_filter::blocked : 0);
-    session->set_ip_filter(filter);
-}
-
-void clear_session_ip_filter(lt::session* session)
+void set_session_ip_filter(lt::session* session, const char* const* first_ips, const char* const* last_ips, const uint8_t* blocked, const int32_t count)
 {
     if (session == nullptr)
     {
         return;
     }
 
-    session->set_ip_filter(lt::ip_filter());
+    lt::ip_filter filter;
+
+    if (first_ips != nullptr && last_ips != nullptr && blocked != nullptr)
+    {
+        for (int32_t i = 0; i < count; ++i)
+        {
+            lt::error_code ec;
+
+            const auto first = lt::make_address(first_ips[i], ec);
+            if (ec)
+            {
+                continue;
+            }
+
+            const auto last = lt::make_address(last_ips[i], ec);
+            if (ec)
+            {
+                continue;
+            }
+
+            filter.add_rule(first, last, blocked[i] ? lt::ip_filter::blocked : 0);
+        }
+    }
+
+    session->set_ip_filter(filter);
 }
 
 // returns the (process-constant) name/index table for every metric alert_session_stats' counters
@@ -793,6 +806,28 @@ void get_torrent_bytes(lt::torrent_info* torrent, char** out_data, int64_t* out_
     {
         *out_data = nullptr;
         *out_size = 0;
+    }
+}
+
+bool get_session_state(lt::session* session, char** out_data, int64_t* out_size)
+{
+    if (session == nullptr || out_data == nullptr || out_size == nullptr)
+    {
+        return false;
+    }
+
+    *out_data = nullptr;
+    *out_size = 0;
+
+    try
+    {
+        const auto state = session->session_state(lt::session::save_dht_state);
+        copy_out(lt::write_session_params_buf(state, lt::session::save_dht_state), out_data, out_size);
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
     }
 }
 

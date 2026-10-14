@@ -11,11 +11,9 @@ namespace TorrentSharp.Wrap.Tests;
 [TestSubject(typeof(TorrentClient))]
 public partial class TorrentClientTests : IDisposable
 {
-    private readonly TorrentClient _client = new(new TorrentClientConfig
-    {
-        ForceEncryption = true,
-        BlockSeeding = true
-    });
+    private readonly TorrentClient _client = new(options => options
+        .Privacy(privacy => privacy.Encryption(EncryptionPolicy.Forced))
+        .Limits(limits => limits.SeedingOutgoingConnections(false)));
 
     private readonly ITestOutputHelper _output;
     private readonly string _tempSavePath;
@@ -75,13 +73,10 @@ public partial class TorrentClientTests : IDisposable
     [Fact]
     public async Task ReconfiguringListenInterface_FiresListenSucceededNotification()
     {
-        // The listen alerts fire the instant the sockets open. A client created with categories already
-        // on opens its default sockets inside the constructor, before any NotificationRaised subscriber
-        // can exist, so those alerts are simply gone - subscribing afterwards and waiting would be a
-        // race. Create it quiet instead (libtorrent's own default alert_mask is just `error`, and the
-        // library no longer adds any), subscribe, then turn the categories on together with a new listen
-        // interface so the sockets reopen with the subscriber already in place.
-        using var client = new TorrentClient(new TorrentClientConfig());
+        // Created quiet (libtorrent's own default alert_mask is just `error`), subscribed afterwards, then
+        // the categories are turned on together with a new listen interface, so the sockets reopen with the
+        // subscriber already in place. (Subscribing from the start is OnNotification - see the next test.)
+        using var client = new TorrentClient();
         var notificationTcs = new TaskCompletionSource<SessionNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         client.NotificationRaised += (_, notification) =>
@@ -95,15 +90,161 @@ public partial class TorrentClientTests : IDisposable
         var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
         probe.Stop();
 
-        client.UpdateSettings(new SettingsPack()
-            .Set(new AlertMask(NotificationCategories.Status))
-            .SetListenInterfaces(new IpInterface(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, port))));
+        client.ChangeOptions(options => options
+            .Notifications(notifications => notifications.Categories(NotificationCategories.Status))
+            .Network(net => net.ListenOn(System.Net.IPAddress.Loopback, port)));
 
         var notification = await notificationTcs.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         var succeeded = Assert.IsType<ListenSucceededNotification>(notification);
         Assert.Equal(port, succeeded.Port);
         Assert.Equal(System.Net.IPAddress.Loopback.ToString(), succeeded.Address);
+    }
+
+    [Fact]
+    public async Task CreatedListening_ReportsItsSocketToAHandlerSubscribedAtStartup()
+    {
+        // The listen alerts fire the instant the sockets open - inside the constructor for a client created
+        // already listening. Only a handler subscribed through OnNotification is there in time.
+        var port = FreeLoopbackPort();
+        var notificationTcs = new TaskCompletionSource<SessionNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var client = new TorrentClient(options => options
+            .Notifications(notifications => notifications.Categories(NotificationCategories.Status))
+            .Network(net => net.ListenOn(System.Net.IPAddress.Loopback, port))
+            .OnNotification((_, notification) =>
+            {
+                if (notification is ListenSucceededNotification or ListenFailedNotification)
+                    notificationTcs.TrySetResult(notification);
+            }));
+
+        var succeeded = Assert.IsType<ListenSucceededNotification>(await notificationTcs.Task.WaitAsync(TimeSpan.FromSeconds(30)));
+        Assert.Equal(port, succeeded.Port);
+        Assert.Equal(System.Net.IPAddress.Loopback.ToString(), succeeded.Address);
+    }
+
+    [Fact]
+    public async Task ChangingOneSetting_LeavesTheOthersAsTheyWere()
+    {
+        // Only Status is enabled, then only the listen port changes: if ChangeOptions sent anything beyond
+        // what it was given (a default alert_mask, say), the new socket's notification would never come.
+        var firstPort = FreeLoopbackPort();
+        var secondPort = FreeLoopbackPort();
+        var listening = new System.Collections.Concurrent.ConcurrentQueue<int>();
+
+        using var client = new TorrentClient(options => options
+            .Notifications(notifications => notifications.Categories(NotificationCategories.Status))
+            .Network(net => net.ListenOn(System.Net.IPAddress.Loopback, firstPort))
+            .OnNotification((_, notification) =>
+            {
+                if (notification is ListenSucceededNotification succeeded)
+                    listening.Enqueue(succeeded.Port);
+            }));
+
+        await WaitUntilAsync(() => listening.Contains(firstPort));
+        client.ChangeOptions(options => options.Network(net => net.ListenOn(System.Net.IPAddress.Loopback, secondPort)));
+
+        await WaitUntilAsync(() => listening.Contains(secondPort));
+    }
+
+    [Fact]
+    public async Task DefaultTimeout_AppliesWhenACallPassesNone_AndAnExplicitOneWins()
+    {
+        // No category enables file_renamed_alert / file_rename_failed_alert, so a rename can only end by timing
+        // out. (Not every async method would do: libtorrent posts some answers, such as resume data and
+        // session stats, whatever the alert mask says.)
+        using var client = new TorrentClient(options => options
+            .Notifications(notifications => notifications.Categories(NotificationCategories.None))
+            .Timeouts(timeouts => timeouts.Default(TimeSpan.FromMilliseconds(200))));
+        var torrent = client.AttachTorrent(new TorrentInfo(Path.GetFullPath(Path.Combine("files", "big-buck-bunny.torrent"))), _tempSavePath);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        await Assert.ThrowsAsync<TimeoutException>(() => torrent.RenameFileAsync(0, "renamed.srt", CancellationToken.None));
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"Took {stopwatch.Elapsed}.");
+
+        stopwatch.Restart();
+        await Assert.ThrowsAsync<TimeoutException>(() => torrent.RenameFileAsync(0, "renamed-again.srt", CancellationToken.None, TimeSpan.FromSeconds(1)));
+        Assert.True(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(900), $"Took {stopwatch.Elapsed}.");
+    }
+
+    [Fact]
+    public void GetState_ContainsTheDhtState()
+    {
+        using var client = CreateWithDht(state: null);
+        WaitUntil(() => client.IsDhtRunning);
+
+        Assert.Contains("9:dht state", System.Text.Encoding.Latin1.GetString(client.GetState()));
+    }
+
+    [Fact]
+    public void State_GivesTheRestartedDhtItsNodeIds()
+    {
+        byte[] first;
+        using (var client = CreateWithDht(state: null))
+        {
+            WaitUntil(() => client.IsDhtRunning);
+            first = client.GetState();
+        }
+
+        using var restored = CreateWithDht(first);
+        WaitUntil(() => restored.IsDhtRunning);
+
+        Assert.Equal(FirstDhtNodeId(first), FirstDhtNodeId(restored.GetState()));
+    }
+
+    // The DHT needs a socket that isn't loopback-only to run at all. The one bootstrap node is unroutable
+    // (TEST-NET-1), so nothing leaves the machine - and having one matters: libtorrent then starts the DHT
+    // only once the node's address is resolved, after the listen sockets are open. With none, it starts the
+    // DHT before there are any sockets and drops the saved state unused.
+    private static TorrentClient CreateWithDht(byte[]? state) => new(options => options
+        .Network(net => net.ListenOn(System.Net.IPAddress.Any, 0))
+        .Discovery(discovery => discovery.Dht(bootstrapNodes: ["192.0.2.1:6881"]).Lsd(false).Upnp(false).NatPmp(false))
+        .State(state));
+
+    // The first node id in the saved DHT state's "node-id" list (each entry is a 20-byte id followed by the
+    // address it was used on).
+    private static string FirstDhtNodeId(byte[] state)
+    {
+        var text = System.Text.Encoding.Latin1.GetString(state);
+        var list = text.IndexOf("7:node-idl", StringComparison.Ordinal);
+        Assert.True(list >= 0, "No DHT node ids in the state.");
+
+        var lengthStart = list + "7:node-idl".Length;
+        var colon = text.IndexOf(':', lengthStart);
+        var length = int.Parse(text[lengthStart..colon], System.Globalization.CultureInfo.InvariantCulture);
+        Assert.True(length >= 20, "The node id entry is too short.");
+
+        return Convert.ToHexString(state, colon + 1, 20);
+    }
+
+    [Fact]
+    public void UnreadableState_IsIgnored()
+    {
+        using var client = new TorrentClient(options => options.State("not a session state"u8.ToArray()));
+
+        Assert.NotEmpty(client.GetState());
+    }
+
+    private static void WaitUntil(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The condition was not met in time.");
+            Thread.Sleep(25);
+        }
+    }
+
+    private static Task WaitUntilAsync(Func<bool> condition) => WaitUntilAsync(() => Task.FromResult(condition()));
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (!await condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The condition was not met in time.");
+            await Task.Delay(25);
+        }
     }
 
     [Fact]
@@ -115,7 +256,7 @@ public partial class TorrentClientTests : IDisposable
         // that session for good. Several clients each reconfigured at the same moment is exactly the
         // interleaving that triggered it.
         const int clientCount = 6;
-        var clients = Enumerable.Range(0, clientCount).Select(_ => new TorrentClient(new TorrentClientConfig())).ToArray();
+        var clients = Enumerable.Range(0, clientCount).Select(_ => new TorrentClient()).ToArray();
 
         try
         {
@@ -136,9 +277,10 @@ public partial class TorrentClientTests : IDisposable
 
             for (var i = 0; i < clientCount; i++)
             {
-                clients[i].UpdateSettings(new SettingsPack()
-                    .Set(new AlertMask(NotificationCategories.Status))
-                    .SetListenInterfaces(new IpInterface(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, ports[i]))));
+                var port = ports[i];
+                clients[i].ChangeOptions(options => options
+                    .Notifications(notifications => notifications.Categories(NotificationCategories.Status))
+                    .Network(net => net.ListenOn(System.Net.IPAddress.Loopback, port)));
             }
 
             var notifications = await Task.WhenAll(received.Select(tcs => tcs.Task)).WaitAsync(TimeSpan.FromSeconds(30));
@@ -174,10 +316,17 @@ public partial class TorrentClientTests : IDisposable
     }
 
     [Fact]
-    public void AddIpFilterRuleAndClearIpFilter_DoNotThrow()
+    public void IpFilter_ReplacesAndClears_WithoutThrowing()
     {
-        _client.AddIpFilterRule("1.2.3.4", "1.2.3.4", blocked: true);
-        _client.ClearIpFilter();
+        _client.ChangeOptions(options => options.IpFilter(filter => filter.Block("1.2.3.4", "1.2.3.4").Allow("1.2.3.4", "1.2.3.4")));
+        _client.ChangeOptions(options => options.IpFilter(_ => { }));
+    }
+
+    [Fact]
+    public void IpFilter_RejectsAnUnreadableRange()
+    {
+        Assert.Throws<FormatException>(() => _client.ChangeOptions(options => options.IpFilter(filter => filter.Block("not-an-ip", "1.2.3.4"))));
+        Assert.Throws<ArgumentException>(() => _client.ChangeOptions(options => options.IpFilter(filter => filter.Block("1.2.3.4", "::1"))));
     }
 
     [Fact]

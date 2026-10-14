@@ -98,8 +98,10 @@ public class PeerNotificationTests
         });
 
         var categories = NotificationCategories.Status | NotificationCategories.Tracker | NotificationCategories.Connect | NotificationCategories.Peer;
-        using var seeder = new TorrentClient(new TorrentClientConfig { NotificationCategories = categories });
-        using var leecher = new TorrentClient(new TorrentClientConfig { NotificationCategories = categories });
+        using var seeder = new TorrentClient(options => options
+            .Notifications(notifications => notifications.Categories(categories))
+            .Network(net => net.ListenOn(IPAddress.Loopback, seederPort)));
+        using var leecher = new TorrentClient(options => options.Notifications(notifications => notifications.Categories(categories)));
 
         var connected = new TaskCompletionSource<PeerNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
         leecher.NotificationRaised += (_, notification) =>
@@ -110,8 +112,6 @@ public class PeerNotificationTests
 
         try
         {
-            seeder.UpdateSettings(new SettingsPack().SetListenInterfaces(new IpInterface(new IPEndPoint(IPAddress.Loopback, seederPort))));
-
             var torrentBytes = BuildTorrent($"http://127.0.0.1:{trackerPort}/announce", "peer-test.bin", content);
             var seedManager = seeder.AttachTorrent(new TorrentInfo(torrentBytes), seedDirectory);
             seedManager.Start();

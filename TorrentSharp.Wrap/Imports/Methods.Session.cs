@@ -13,12 +13,21 @@ internal static partial class Methods
     public delegate void SessionEventCallback(IntPtr alertPtr);
 
     /// <summary>
-    /// Creates a session, optionally seeded from an existing settings pack.
+    /// Creates a libtorrent session from a native settings pack, optionally starting its DHT from a state
+    /// returned by <see cref="GetSessionState"/>.
     /// </summary>
-    /// <param name="settingsPack">Settings pack handle, or <c>null</c> to use the defaults</param>
-    /// <returns>Handle to the new session</returns>
+    /// <param name="settingsPack">Native settings pack handle</param>
+    /// <param name="state">Previous session state, or <c>null</c></param>
+    /// <param name="stateLength">Length of <paramref name="state"/></param>
     [LibraryImport(LibraryName, EntryPoint = "create_session")]
-    public static unsafe partial IntPtr CreateSession(void* settingsPack);
+    public static unsafe partial IntPtr CreateSession(void* settingsPack, byte[]? state, long stateLength);
+
+    /// <summary>
+    /// Serializes the session's DHT state into a native-allocated buffer, released with <see cref="FreeTorrentBytes"/>.
+    /// </summary>
+    [return: MarshalAs(UnmanagedType.I1)]
+    [LibraryImport(LibraryName, EntryPoint = "get_session_state")]
+    public static partial bool GetSessionState(IntPtr sessionHandle, out IntPtr data, out long size);
 
     /// <summary>
     /// Releases the unmanaged resources held by a session.
@@ -69,22 +78,10 @@ internal static partial class Methods
     public static partial void AddSessionDhtNode(IntPtr sessionHandle, [MarshalAs(UnmanagedType.LPUTF8Str)] string host, int port);
 
     /// <summary>
-    /// Adds one rule to the session's IP filter. Rules accumulate across calls until
-    /// <see cref="ClearSessionIpFilter"/> resets the filter.
+    /// Replaces the session's IP filter with these rules; an empty set clears it.
     /// </summary>
-    /// <param name="sessionHandle">Session to update</param>
-    /// <param name="firstIp">First address in the range (inclusive)</param>
-    /// <param name="lastIp">Last address in the range (inclusive)</param>
-    /// <param name="blocked">Whether addresses in this range should be blocked</param>
-    [LibraryImport(LibraryName, EntryPoint = "add_session_ip_filter_rule", StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void AddSessionIpFilterRule(IntPtr sessionHandle, [MarshalAs(UnmanagedType.LPUTF8Str)] string firstIp, [MarshalAs(UnmanagedType.LPUTF8Str)] string lastIp, [MarshalAs(UnmanagedType.I1)] bool blocked);
-
-    /// <summary>
-    /// Clears every rule from the session's IP filter.
-    /// </summary>
-    /// <param name="sessionHandle">Session to update</param>
-    [LibraryImport(LibraryName, EntryPoint = "clear_session_ip_filter")]
-    public static partial void ClearSessionIpFilter(IntPtr sessionHandle);
+    [LibraryImport(LibraryName, EntryPoint = "set_session_ip_filter", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void SetSessionIpFilter(IntPtr sessionHandle, string[] firstIps, string[] lastIps, byte[] blocked, int count);
 
     /// <summary>
     /// Reads the process-constant name/index table describing every metric a session stats

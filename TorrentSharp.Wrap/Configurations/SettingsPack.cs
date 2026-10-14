@@ -35,6 +35,8 @@ public class SettingsPack
     /// Translates the current key/value store into a native settings pack.
     /// </summary>
     /// <returns>Handle to the newly built native pack</returns>
+    internal bool IsEmpty => _dictionary.Count == 0;
+
     internal IntPtr BuildNative()
     {
         var settingsPack = Methods.CreateSettingsPack();

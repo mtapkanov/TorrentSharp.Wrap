@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using TorrentSharp.Wrap.Configurations;
 
 namespace TorrentSharp.Wrap.DependencyInjection;
@@ -7,18 +6,31 @@ namespace TorrentSharp.Wrap.DependencyInjection;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers a single <see cref="TorrentClient"/> instance backed by the options pattern.
+    /// Registers the <see cref="ITorrentClient"/> singleton, with everything it is configured with at startup
+    /// in <paramref name="configure"/>. The client - and its libtorrent session - is created on first use.
     /// </summary>
-    /// <param name="services"></param>
-    /// <param name="configureOptions">Configures the <see cref="TorrentClientConfig"/> used to build the client</param>
-    public static IServiceCollection AddTorrentClient(this IServiceCollection services, Action<TorrentClientConfig>? configureOptions = null)
+    /// <example>
+    /// <code>
+    /// services.AddTorrentClient(options => options
+    ///     .Identity(identity => identity.UserAgent("MyApp/1.0"))
+    ///     .Network(net => net.ListenOn(IPAddress.Any, 51413))
+    ///     .Discovery(discovery => discovery.Dht().Lsd())
+    ///     .Notifications(notifications => notifications.Categories(NotificationCategories.Status)));
+    /// </code>
+    /// </example>
+    public static IServiceCollection AddTorrentClient(this IServiceCollection services, Action<ITorrentClientStartupOptions>? configure = null) =>
+        services.AddTorrentClient((_, options) => configure?.Invoke(options));
+
+    /// <summary>
+    /// Same as <see cref="AddTorrentClient(IServiceCollection, Action{ITorrentClientStartupOptions})"/>, for
+    /// configuration that needs other services - settings kept in a database, a handler to subscribe through
+    /// <see cref="ITorrentClientStartupOptions.OnNotification"/>, a saved <see cref="ITorrentClientStartupOptions.State"/>.
+    /// </summary>
+    public static IServiceCollection AddTorrentClient(this IServiceCollection services, Action<IServiceProvider, ITorrentClientStartupOptions> configure)
     {
-        var optionsBuilder = services.AddOptions<TorrentClientConfig>();
+        ArgumentNullException.ThrowIfNull(configure);
 
-        if (configureOptions is not null)
-            optionsBuilder.Configure(configureOptions);
-
-        services.AddSingleton(sp => new TorrentClient(sp.GetRequiredService<IOptions<TorrentClientConfig>>().Value));
+        services.AddSingleton<ITorrentClient>(provider => new TorrentClient(options => configure(provider, options)));
 
         return services;
     }

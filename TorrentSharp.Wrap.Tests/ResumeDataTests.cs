@@ -17,12 +17,10 @@ public class ResumeDataTests : IDisposable
 {
     private const int PieceLength = 16 * 1024;
 
-    private readonly TorrentClient _client = new(new TorrentClientConfig
-    {
-        BlockSeeding = true,
+    private readonly TorrentClient _client = new(options => options
+        .Limits(limits => limits.SeedingOutgoingConnections(false))
         // save_resume_data_alert is a Storage alert, torrent_removed_alert a Status one.
-        NotificationCategories = NotificationCategories.Status | NotificationCategories.Storage
-    });
+        .Notifications(notifications => notifications.Categories(NotificationCategories.Status | NotificationCategories.Storage)));
 
     private readonly string _savePath = Directory.CreateTempSubdirectory("tsw-resume-test-").FullName;
 

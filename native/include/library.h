@@ -16,9 +16,14 @@
 extern "C" {
 #endif
 
-    // session control
-    TSW_EXPORT lt::session* create_session(lt::settings_pack* pack);
+    // session control - state/state_len are optional (nullptr/0): a buffer from get_session_state. Only its
+    // DHT state (node ids and known nodes) is taken, so the new session bootstraps its DHT from where the
+    // previous one left off; the settings always come from pack.
+    TSW_EXPORT lt::session* create_session(lt::settings_pack* pack, const char* state, int64_t state_len);
     TSW_EXPORT void destroy_session(lt::session* session);
+
+    // the session's DHT state, for create_session. *out_data must be freed with free_torrent_bytes.
+    TSW_EXPORT bool get_session_state(lt::session* session, char** out_data, int64_t* out_size);
 
     TSW_EXPORT void set_event_callback(lt::session* session, cs_alert_callback callback, bool include_unmapped_events);
     TSW_EXPORT void clear_event_callback(lt::session* session);
@@ -29,10 +34,9 @@ extern "C" {
     TSW_EXPORT bool is_session_dht_running(lt::session* session);
     TSW_EXPORT void add_session_dht_node(lt::session* session, const char* host, int32_t port);
 
-    // IP filter - additive; add_session_ip_filter_rule reads the current filter, adds one rule,
-    // and writes it back, so rules accumulate across calls until clear_session_ip_filter resets it.
-    TSW_EXPORT void add_session_ip_filter_rule(lt::session* session, const char* first_ip, const char* last_ip, bool blocked);
-    TSW_EXPORT void clear_session_ip_filter(lt::session* session);
+    // IP filter - replaces the whole filter with these rules (count 0 clears it). Rules whose addresses
+    // don't parse are skipped.
+    TSW_EXPORT void set_session_ip_filter(lt::session* session, const char* const* first_ips, const char* const* last_ips, const uint8_t* blocked, int32_t count);
 
     // session statistics - get_session_stats_metrics returns the (process-constant) name/index
     // table once; post_session_stats triggers an async sample, reported via alert_session_stats

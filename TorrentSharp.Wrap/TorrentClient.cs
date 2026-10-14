@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using TorrentSharp.Wrap.Configurations;
+using TorrentSharp.Wrap.Configurations.Options;
 using TorrentSharp.Wrap.Configurations.Settings;
 using TorrentSharp.Wrap.Notifications;
 using TorrentSharp.Wrap.Enums;
@@ -13,7 +14,7 @@ namespace TorrentSharp.Wrap;
 /// <summary>
 /// A client that manages a libtorrent session and its attached torrents.
 /// </summary>
-public class TorrentClient : IDisposable
+public class TorrentClient : ITorrentClient
 {
     private readonly ConcurrentDictionary<string, TorrentManager> _attachedManagers = new(StringComparer.OrdinalIgnoreCase);
 
@@ -32,33 +33,39 @@ public class TorrentClient : IDisposable
 
     private bool _disposed;
     private bool _includeUnmappedEvents;
+    private string _defaultDownloadPath = Path.Combine(Environment.CurrentDirectory, "downloads");
+    private TimeSpan _defaultTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Creates a client using default settings.
+    /// Creates the client and its libtorrent session, configured by <paramref name="configure"/> from the
+    /// start. Anything it doesn't set keeps libtorrent's own default; change settings later with
+    /// <see cref="ChangeOptions"/>.
     /// </summary>
-    public TorrentClient() : this(new SettingsPack())
+    /// <example>
+    /// <code>
+    /// using var client = new TorrentClient(options => options
+    ///     .Network(net => net.ListenOn(IPAddress.Any, 51413))
+    ///     .Discovery(discovery => discovery.Dht().Lsd())
+    ///     .Notifications(notifications => notifications.Categories(NotificationCategories.Status | NotificationCategories.Storage)));
+    /// </code>
+    /// </example>
+    public unsafe TorrentClient(Action<ITorrentClientStartupOptions>? configure = null)
     {
-    }
+        var options = new TorrentClientOptionsBuilder();
+        configure?.Invoke(options);
 
-    /// <summary>
-    /// Creates a client from a high-level configuration object.
-    /// </summary>
-    public TorrentClient(TorrentClientConfig config) : this(config.Build())
-    {
-    }
+        // Before the session exists: it starts listening, mapping ports and so on at once, and a
+        // notification nobody is subscribed to yet is dropped.
+        foreach (var handler in options.Handlers)
+            NotificationRaised += handler;
 
-    /// <summary>
-    /// Shared implementation the public constructors funnel through.
-    /// For settings beyond what <see cref="TorrentClientConfig"/> exposes, construct normally
-    /// and call <see cref="UpdateSettings"/> afterward.
-    /// </summary>
-    private unsafe TorrentClient(SettingsPack pack)
-    {
-        var packHandle = pack.BuildNative();
+        ApplyClientOptions(options);
+
+        var packHandle = options.Pack.BuildNative();
 
         try
         {
-            _handle = Methods.CreateSession(packHandle.ToPointer());
+            _handle = Methods.CreateSession(packHandle.ToPointer(), options.SessionState, options.SessionState?.Length ?? 0);
 
             if (_handle == IntPtr.Zero)
                 throw new InvalidOperationException("Failed to create session.");
@@ -70,6 +77,9 @@ public class TorrentClient : IDisposable
         {
             Methods.FreeSettingsPack(packHandle);
         }
+
+        if (options.IpFilterRules is not null)
+            SetIpFilter(options.IpFilterRules);
     }
 
     ~TorrentClient()
@@ -77,47 +87,62 @@ public class TorrentClient : IDisposable
         Dispose();
     }
 
-    /// <summary>
-    /// Torrents currently attached to this session.
-    /// </summary>
+    /// <inheritdoc />
     public IEnumerable<TorrentManager> ActiveTorrents => _attachedManagers.Values;
 
-    /// <summary>
-    /// Whether to also raise a bare <see cref="SessionNotification"/> for event types with no dedicated payload.
-    /// </summary>
-    /// <remarks>
-    /// Changing this after the client is already listening resets the underlying event callback.
-    /// </remarks>
-    public bool IncludeUnmappedEvents
-    {
-        get => _includeUnmappedEvents;
-        set
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            _includeUnmappedEvents = value;
+    /// <inheritdoc />
+    public event EventHandler<SessionNotification>? NotificationRaised;
 
-            // переустанавливаем callback с новым значением флага
+    /// <inheritdoc />
+    public void ChangeOptions(Action<ITorrentClientOptions> change)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(change);
+
+        var options = new TorrentClientOptionsBuilder();
+        change(options);
+
+        var resetCallback = options.IncludeUnmappedEvents is { } include && include != _includeUnmappedEvents;
+        ApplyClientOptions(options);
+
+        if (resetCallback)
+        {
             Methods.ClearEventCallback(_handle);
-            Methods.SetEventCallback(_handle, _eventCallback, value);
+            Methods.SetEventCallback(_handle, _eventCallback, _includeUnmappedEvents);
+        }
+
+        if (!options.Pack.IsEmpty)
+            UpdateSettings(options.Pack);
+
+        if (options.IpFilterRules is not null)
+            SetIpFilter(options.IpFilterRules);
+    }
+
+    /// <inheritdoc />
+    public byte[] GetState()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!Methods.GetSessionState(_handle, out var data, out var size) || data == IntPtr.Zero || size <= 0)
+            throw new InvalidOperationException("Failed to read the session state.");
+
+        try
+        {
+            var state = new byte[size];
+            Marshal.Copy(data, state, 0, (int)size);
+            return state;
+        }
+        finally
+        {
+            Methods.FreeTorrentBytes(data);
         }
     }
 
     /// <summary>
-    /// Default directory new torrents are saved to.
-    /// A relative save path passed when attaching a torrent is resolved against this.
+    /// Applies a settings pack to the running session as is - the low-level path under
+    /// <see cref="ChangeOptions"/>. The change takes effect asynchronously.
     /// </summary>
-    public string DefaultDownloadPath { get; set; } = Path.Combine(Environment.CurrentDirectory, "downloads");
-
-    /// <summary>
-    /// Raised whenever the session produces a notification.
-    /// Backed by an unmanaged event loop that starts/stops with the first/last subscriber.
-    /// </summary>
-    public event EventHandler<SessionNotification>? NotificationRaised;
-
-    /// <summary>
-    /// Applies a settings pack to the running session. The change takes effect asynchronously.
-    /// </summary>
-    public void UpdateSettings(SettingsPack pack)
+    internal void UpdateSettings(SettingsPack pack)
     {
         var packHandle = pack.BuildNative();
 
@@ -131,9 +156,29 @@ public class TorrentClient : IDisposable
         }
     }
 
-    /// <summary>
-    /// Whether the session's DHT node is currently running.
-    /// </summary>
+    // What the client keeps itself rather than libtorrent - the event callback picks up
+    // _includeUnmappedEvents the next time it is set.
+    private void ApplyClientOptions(TorrentClientOptionsBuilder options)
+    {
+        if (options.DefaultDownloadPath is { } downloadPath)
+            _defaultDownloadPath = downloadPath;
+
+        if (options.DefaultTimeout is { } timeout)
+            _defaultTimeout = timeout;
+
+        if (options.IncludeUnmappedEvents is { } includeUnmapped)
+            _includeUnmappedEvents = includeUnmapped;
+    }
+
+    private void SetIpFilter(IReadOnlyList<IpFilterRule> rules) =>
+        Methods.SetSessionIpFilter(
+            _handle,
+            [.. rules.Select(rule => rule.FirstIp)],
+            [.. rules.Select(rule => rule.LastIp)],
+            [.. rules.Select(rule => rule.Blocked ? (byte)1 : (byte)0)],
+            rules.Count);
+
+    /// <inheritdoc />
     public bool IsDhtRunning
     {
         get
@@ -143,51 +188,14 @@ public class TorrentClient : IDisposable
         }
     }
 
-    /// <summary>
-    /// Adds a bootstrap node to the session's DHT routing table.
-    /// </summary>
-    /// <param name="host">Hostname or IP address of the node</param>
-    /// <param name="port">Port the node listens on</param>
+    /// <inheritdoc />
     public void AddDhtNode(string host, int port)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         Methods.AddSessionDhtNode(_handle, host, port);
     }
 
-    /// <summary>
-    /// Adds one rule to the session's IP filter. Rules accumulate across calls until
-    /// <see cref="ClearIpFilter"/> resets the filter.
-    /// </summary>
-    /// <param name="firstIp">First address in the range (inclusive)</param>
-    /// <param name="lastIp">Last address in the range (inclusive)</param>
-    /// <param name="blocked">Whether addresses in this range should be blocked</param>
-    public void AddIpFilterRule(string firstIp, string lastIp, bool blocked = true)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        Methods.AddSessionIpFilterRule(_handle, firstIp, lastIp, blocked);
-    }
-
-    /// <summary>
-    /// Clears every rule from the session's IP filter.
-    /// </summary>
-    public void ClearIpFilter()
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        Methods.ClearSessionIpFilter(_handle);
-    }
-
-    /// <summary>
-    /// Samples the session's internal counters/gauges and asynchronously waits for the result.
-    /// </summary>
-    /// <remarks>
-    /// Only one sample can be pending at a time - starting a new one while one is already pending
-    /// abandons the wait for the first (its own <paramref name="timeout"/> still applies; the
-    /// sample itself isn't cancelled).
-    /// </remarks>
-    /// <param name="cancellationToken">Cancels the wait; the sample itself keeps going regardless</param>
-    /// <param name="timeout">Upper bound on the wait, independent of <paramref name="cancellationToken"/>. Defaults to 30s.</param>
-    /// <returns>Every sampled metric, keyed by libtorrent's own metric name (e.g. <c>"net.recv_bytes"</c>)</returns>
-    /// <exception cref="TimeoutException">No result arrived within <paramref name="timeout"/></exception>
+    /// <inheritdoc />
     public async Task<IReadOnlyDictionary<string, long>> GetSessionStatsAsync(CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -197,26 +205,10 @@ public class TorrentClient : IDisposable
 
         Methods.PostSessionStats(_handle);
 
-        return await taskCompletionSource.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        return await taskCompletionSource.Task.WaitAsync(timeout ?? _defaultTimeout, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Adds a parsed torrent to the session so it can be transferred.
-    /// </summary>
-    /// <param name="torrent">Parsed torrent to add</param>
-    /// <param name="savePath">Where to store/read its contents</param>
-    /// <param name="resumeData">
-    /// Previously saved resume data (see <see cref="TorrentManager.SaveResumeDataAsync"/>), or
-    /// <c>null</c> for a fresh attach. Malformed or stale data is silently ignored rather than
-    /// failing the attach.
-    /// </param>
-    /// <param name="downloadByDefault">
-    /// When <c>false</c>, every file starts at <see cref="FileDownloadPriority.DoNotDownload"/>
-    /// instead of the usual default - useful to inspect a torrent (or let the caller pick files)
-    /// before committing to downloading anything.
-    /// </param>
-    /// <returns>A <see cref="TorrentManager"/> for controlling the transfer</returns>
-    /// <exception cref="InvalidOperationException">The session rejected the torrent</exception>
+    /// <inheritdoc />
     public TorrentManager AttachTorrent(TorrentInfo torrent, string? savePath = null, byte[]? resumeData = null, bool downloadByDefault = true)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -233,32 +225,13 @@ public class TorrentClient : IDisposable
         if (handle == IntPtr.Zero)
             throw new InvalidOperationException("Failed to attach torrent to session.");
 
-        var manager = new TorrentManager(handle, savePath, infoHash, torrent);
+        var manager = new TorrentManager(handle, savePath, infoHash, torrent, () => _defaultTimeout);
         _attachedManagers.TryAdd(infoHash, manager);
 
         return manager;
     }
 
-    /// <summary>
-    /// Adds a magnet link to the session.
-    /// </summary>
-    /// <param name="magnetUri">Magnet URI to add</param>
-    /// <param name="savePath">Where to store the downloaded content</param>
-    /// <param name="resumeData">
-    /// Previously saved resume data (see <see cref="TorrentManager.SaveResumeDataAsync"/>), or
-    /// <c>null</c> for a fresh attach. When it parses successfully it takes over entirely (trackers,
-    /// and metadata if it was fetched before the data was saved), taking priority over
-    /// <paramref name="magnetUri"/>'s own trackers. Malformed or stale data is silently ignored
-    /// rather than failing the attach.
-    /// </param>
-    /// <param name="downloadByDefault">
-    /// When <c>false</c>, every file discovered once metadata arrives starts at
-    /// <see cref="FileDownloadPriority.DoNotDownload"/> instead of the usual default - useful to
-    /// inspect a magnet (or let the caller pick files) before committing to downloading anything,
-    /// without racing the moment metadata is received.
-    /// </param>
-    /// <returns>A <see cref="TorrentManager"/> for controlling the transfer</returns>
-    /// <exception cref="InvalidOperationException">The URI was invalid, or the session rejected it</exception>
+    /// <inheritdoc />
     public TorrentManager AttachMagnet(string magnetUri, string? savePath = null, byte[]? resumeData = null, bool downloadByDefault = true)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -284,16 +257,14 @@ public class TorrentClient : IDisposable
         // metadata_received_alert for metadata it had from the start - so pick it up here, or Info would
         // stay null and WaitForMetadata would never return.
         var infoHandle = resumeData is null ? IntPtr.Zero : Methods.GetHandleTorrentInfo(handle);
-        var manager = new TorrentManager(handle, savePath, infoHash, infoHandle == IntPtr.Zero ? null : new TorrentInfo(infoHandle));
+        var info = infoHandle == IntPtr.Zero ? null : new TorrentInfo(infoHandle);
+        var manager = new TorrentManager(handle, savePath, infoHash, info, () => _defaultTimeout);
         _attachedManagers.TryAdd(infoHash, manager);
 
         return manager;
     }
 
-    /// <summary>
-    /// Removes a torrent from the session and stops its transfer.
-    /// </summary>
-    /// <param name="manager">Torrent to remove</param>
+    /// <inheritdoc />
     public void DetachTorrent(TorrentManager manager)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -350,10 +321,10 @@ public class TorrentClient : IDisposable
 
     private string ResolveSavePath(string? savePath)
     {
-        savePath ??= DefaultDownloadPath;
+        savePath ??= _defaultDownloadPath;
 
-        if (!Path.IsPathRooted(savePath)) 
-            savePath = Path.Combine(DefaultDownloadPath, savePath);
+        if (!Path.IsPathRooted(savePath))
+            savePath = Path.Combine(_defaultDownloadPath, savePath);
 
         Directory.CreateDirectory(savePath);
 
